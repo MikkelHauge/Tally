@@ -49,13 +49,13 @@ local function AppendKillRecords(entries, combat, fights, tracked)
 		and ("x"..ns.FormatNumber(bestFight)..(combat.bestFightAt and ("  ·  "..ns.FormatDate(combat.bestFightAt)) or ""))
 		or "none yet"
 	entries[#entries + 1] = { divider = true }
-	entries[#entries + 1] = { left = "Records", leftColor = CATEGORY_HEAD_COLOR }
+	entries[#entries + 1] = { left = "Kill records", leftColor = CATEGORY_HEAD_COLOR }
 	entries[#entries + 1] = {
-		left = "Best combat",
+		left = "Most kills in one fight",
 		right = bestLine,
 		tip = {
 			kind = "note",
-			title = "Best combat",
+			title = "Most kills in one fight",
 			lines = {
 				{ text = bestFight > 0 and (ns.FormatNumber(bestFight).." kills in one fight") or "No fight with a kill yet." },
 				{ text = combat.bestFightAt and ("When "..ns.FormatDateTime(combat.bestFightAt)) or "When not read", color = ROW_DIM },
@@ -65,11 +65,11 @@ local function AppendKillRecords(entries, combat, fights, tracked)
 		},
 	}
 	entries[#entries + 1] = {
-		left = "Average per fight",
+		left = "Average kills per fight",
 		right = perFight and KillAverage(perFight) or "-",
 		tip = {
 			kind = "note",
-			title = "Average per fight",
+			title = "Average kills per fight",
 			lines = {
 				{ text = perFight and (KillAverage(perFight).." kills per fight") or "No fight since kill tracking began." },
 				{ text = ns.FormatNumber(fightsSince)..(fightsSince == 1 and " fight" or " fights").." counted since then", color = ROW_DIM },
@@ -79,13 +79,13 @@ local function AppendKillRecords(entries, combat, fights, tracked)
 	}
 	local best10 = combat.best10 or 0
 	entries[#entries + 1] = {
-		left = "Best 10 minutes",
+		left = "Most kills in 10 minutes",
 		right = best10 > 0
 			and ("x"..ns.FormatNumber(best10)..(combat.best10At and ("  ·  "..ns.FormatDate(combat.best10At)) or ""))
 			or "none yet",
 		tip = {
 			kind = "note",
-			title = "Best 10 minutes",
+			title = "Most kills in 10 minutes",
 			lines = {
 				{ text = best10 > 0 and (ns.FormatNumber(best10).." kills in ten minutes") or "No ten-minute window has a kill yet." },
 				{ text = combat.best10At and ("When "..ns.FormatDateTime(combat.best10At)) or "When not read", color = ROW_DIM },
@@ -106,7 +106,7 @@ local function AppendKillRecords(entries, combat, fights, tracked)
 		rate = KillAverage(perCombat).." in combat"
 	end
 	entries[#entries + 1] = {
-		left = "Per 10 minutes",
+		left = "Kills per 10 minutes",
 		right = rate,
 		tip = {
 			kind = "note",

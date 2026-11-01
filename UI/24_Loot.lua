@@ -8,7 +8,8 @@ local ACCENT, TILE_WIDTH, TILE_HEIGHT, TILE_GAP, CreateTile, SetTile, CreateTile
 -- Loot page
 -------------------------------------------------------------------------------
 
-local lootWidgets = { tiles = {} }
+local lootWidgets = { tiles = {}, view = "value" }
+local CreateCornerButton, SetCornerLabel = ns.CreateCornerButton, ns.SetCornerLabel
 
 -- How many rows the loot card holds: FillCardRows draws
 -- floor((height - 46) / ROW_STEP) of them, and the two blocks on the card
@@ -121,24 +122,46 @@ local function RefreshLoot()
 			}
 		end
 	end
-	if FillCardRows(lootWidgets.quality, entries, 20) == 0 then
+	if FillCardRows(lootWidgets.quality, entries, 48) == 0 then
 		ShowCardText(lootWidgets.quality, "No loot recorded yet.")
 	end
 
 	-- Item on the left, vendor value and time on the right; ShortWhen gives a
-	-- clock time for today's finds and a date for older ones. The list holds
-	-- the 50 most valuable finds and scrolls, so all of them can be read.
+	-- clock time for today's finds and a date for older ones. The card has two
+	-- views: the 50 most valuable finds, and the last 50 individual drops.
 	local bestEntries = {}
-	for index = 1, #loot.best do
-		local entry = loot.best[index]
-		bestEntries[#bestEntries + 1] = {
-			left = entry.name or "?",
-			leftColor = QUALITY_COLORS[ItemQuality(entry)] or QUALITY_COLORS[1],
-			right = ns.MoneyColored(entry.value).."  ·  "..ShortWhen(entry.at),
-		}
+	local bestTitle = "Most valuable finds"
+	if lootWidgets.view == "recent" then
+		bestTitle = "Most recent loot"
+		local recent = loot.recent or {}
+		for index = #recent, 1, -1 do
+			local entry = recent[index]
+			local _, _, quality, sellPrice = ns.ItemInfo(entry.id)
+			local value = sellPrice and sellPrice * (entry.count or 1) or nil
+			local name = entry.name or "?"
+			if (entry.count or 1) > 1 then
+				name = name.." x"..entry.count
+			end
+			bestEntries[#bestEntries + 1] = {
+				left = name,
+				leftColor = QUALITY_COLORS[quality or entry.quality or 1] or QUALITY_COLORS[1],
+				right = (value and ns.MoneyColored(value) or "no price").."  ·  "..ShortWhen(entry.at),
+			}
+		end
+	else
+		for index = 1, #loot.best do
+			local entry = loot.best[index]
+			bestEntries[#bestEntries + 1] = {
+				left = entry.name or "?",
+				leftColor = QUALITY_COLORS[ItemQuality(entry)] or QUALITY_COLORS[1],
+				right = ns.MoneyColored(entry.value).."  ·  "..ShortWhen(entry.at),
+			}
+		end
 	end
-	if FillScrollingLines(lootWidgets.best, bestEntries, lootWidgets, "bestScrollOffset", "Best finds", 22) == 0 then
-		if not valued then
+	if FillScrollingLines(lootWidgets.best, bestEntries, lootWidgets, "bestScrollOffset", bestTitle, 22) == 0 then
+		if lootWidgets.view == "recent" then
+			ShowCardText(lootWidgets.best, "Nothing looted yet.")
+		elseif not valued then
 			ShowCardText(lootWidgets.best, "This game does not give addons item values, so Tally cannot work out what loot is worth. The count and the quality breakdown are unaffected; values stay blank.")
 		else
 			ShowCardText(lootWidgets.best, "Nothing with a sell value has been looted yet.")
@@ -163,7 +186,7 @@ local function RefreshLoot()
 	end
 	if favourite then
 		local _, _, quality, sellPrice = ns.ItemInfo(favourite.id)
-		local name = QualityCode(quality)..CutRowText(favourite.name or "?", 16).."|r"
+		local name = QualityCode(quality)..CutRowText(favourite.name or "?", 17).."|r"
 		local count = ns.FormatNumber(favourite.count)
 		local tile = lootWidgets.tiles[4]
 		if not tile.subRight then
@@ -218,11 +241,35 @@ end
 local function BuildLootPage(page)
 	CreateTileRow(page, -4, { "Items looted", "Total vendor value", "Most valuable find", "Most looted item" }, lootWidgets.tiles, false)
 	lootWidgets.quality = CreateListCard(page, 0, -88, 359, 250, "Looted")
-	lootWidgets.best = CreateListCard(page, 371, -88, 359, 250, "Best finds")
+	lootWidgets.best = CreateListCard(page, 371, -88, 359, 250, "Most valuable finds")
 	AddCardTitleNote(lootWidgets.quality, "Looted",
 		"Every item this character loots, by quality and then the five items looted most often; grey and quest items are left out of the ranking. Other players' loot lines are not counted.")
-	AddCardTitleNote(lootWidgets.best, "Best finds",
-		"The 50 most valuable items looted, priced at what a vendor would pay for one; the date is when it dropped.")
+	AddCardTitleNote(lootWidgets.best, "Most valuable finds",
+		"The 50 most valuable items looted, priced at what a vendor would pay for one; the date is when it dropped. The corner button switches to the last 50 individual drops.")
+	-- The same card, two views: value and recency. It keeps its own scroll
+	-- position per view so switching back does not lose the place.
+	local viewButton = CreateCornerButton(lootWidgets.best)
+	SetCornerLabel(viewButton, "most valuable")
+	viewButton:SetScript("OnClick", function()
+		if lootWidgets.view == "recent" then
+			lootWidgets.view = "value"
+			SetCornerLabel(viewButton, "most valuable")
+		else
+			lootWidgets.view = "recent"
+			SetCornerLabel(viewButton, "recent loot")
+		end
+		lootWidgets.bestScrollOffset = 0
+		RefreshLoot()
+	end)
+	viewButton:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_BOTTOMRIGHT")
+		GameTooltip:AddLine("Which finds", ACCENT[1], ACCENT[2], ACCENT[3])
+		GameTooltip:AddLine("Switch between the 50 most valuable items and the last 50 individual drops. Both list one item per row with its value and the time it dropped.", 1, 1, 1, true)
+		GameTooltip:Show()
+	end)
+	viewButton:SetScript("OnLeave", function()
+		GameTooltip:Hide()
+	end)
 	-- Every find is kept, so the card takes the wheel like the other lists.
 	MakeCardScrollable(lootWidgets.best, lootWidgets, "bestScrollOffset", RefreshLoot)
 

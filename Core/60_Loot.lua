@@ -229,6 +229,9 @@ local function ResolveLootValue(itemID, count, fallbackName, fallbackQuality)
 		-- in Best finds.
 		char.loot.quality[fallbackQuality] = math.max(0, (char.loot.quality[fallbackQuality] or 0) - count)
 		char.loot.quality[quality] = (char.loot.quality[quality] or 0) + count
+		if ns.NoteLootQualityMilestone then
+			ns.NoteLootQualityMilestone(quality, char.loot.quality[quality])
+		end
 	end
 	if value > 0 then
 		InsertBestLoot({
@@ -391,6 +394,21 @@ local function NoteLoot(itemID, linkName, quality, count)
 		ns.NoteLootMilestone(char.loot.items)
 	end
 	char.loot.quality[quality] = (char.loot.quality[quality] or 0) + count
+	if ns.NoteLootQualityMilestone then
+		ns.NoteLootQualityMilestone(quality, char.loot.quality[quality])
+	end
+	-- The last fifty drops, one entry per drop, newest last. It is the log
+	-- behind the Loot tab's "Most recent loot" view; the item's own tally and
+	-- the best-finds list are separate, aggregated views.
+	local recent = char.loot.recent
+	if not recent then
+		recent = {}
+		char.loot.recent = recent
+	end
+	recent[#recent + 1] = { id = itemID, name = linkName, quality = quality, count = count, at = at }
+	while #recent > 50 do
+		table.remove(recent, 1)
+	end
 	local counts = char.loot.itemCounts
 	if not counts then
 		-- Characters recorded before the tally existed: start it now.
@@ -509,6 +527,13 @@ end
 
 ns.OnLootMessage = OnLootMessage
 ns.ResolvePendingLoot = ResolvePendingLoot
+
+-- Item values still waiting for the client's item cache belong to the
+-- character that looted them; a character switch must not resolve them into
+-- the next character's totals.
+function ns.ClearPendingLoot()
+	pendingLoot = {}
+end
 ns.StepLootQualityRepair = StepLootQualityRepair
 ns.QueueLootQualityRepair = QueueLootQualityRepair
 -- Owner namespace. Every field references the flat API; itemValueAvailable
@@ -522,5 +547,6 @@ ns.loot.TallyCount = ns.LootTallyCount
 ns.loot.OnMessage = ns.OnLootMessage
 ns.loot.ResolvePending = ns.ResolvePendingLoot
 ns.loot.ResolvePendingFor = ns.ResolvePendingLootFor
+ns.loot.ClearPending = ns.ClearPendingLoot
 ns.loot.StepQualityRepair = ns.StepLootQualityRepair
 ns.loot.QueueQualityRepair = ns.QueueLootQualityRepair

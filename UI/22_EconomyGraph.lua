@@ -103,78 +103,63 @@ local function RefreshEconomyGraph()
 		economyWidgets.segments = {}
 		economyWidgets.markers = {}
 	end
-	-- Rebuilt on every refresh: the hover of any point on a day shows that
-	-- day's table, so it must match the lines currently drawn.
-	economyWidgets.dayRows = {}
+	-- Rebuilt whenever the drawing changes: the hover of any point on a day
+	-- shows that day's table, so it must match the lines currently drawn.
 	local graph = economyWidgets.graph
 
 	local data = ns.GoldTracks(economyWidgets.graphDays or 14)
 
-	-- One character only: the one selected in the viewer. The Total picker
-	-- belongs to the other views; the graph follows the character it is
-	-- describing, not a multi-character tick list.
-	local key = ns.viewKey or ns.charKey
-	local selectedMember
-	for index = 1, #data.members do
-		if data.members[index].key == key then
-			selectedMember = data.members[index]
-			break
-		end
-	end
-	local track
-	for index = 1, #data.tracks do
-		if data.tracks[index].key == key then
-			track = data.tracks[index]
-			break
-		end
-	end
+	-- Every character ticked in the Total picker, the same selection the
+	-- levelling graph and the combined figures use.
 	local shown = {}
-	if track then
-		track.color = CharColor(track.char)
-		shown[1] = track
+	for index = 1, #data.tracks do
+		local candidate = data.tracks[index]
+		if ns.TotalIncludes(candidate.key) then
+			candidate.color = CharColor(candidate.char)
+			shown[#shown + 1] = candidate
+		end
 	end
-	economyWidgets.graphSelected = track or selectedMember
+	economyWidgets.graphShown = shown
+	economyWidgets.graphSelected = shown[1]
 	local function CardLabel()
 		return "Economy graph - last "..(economyWidgets.graphDays or 14).." days"
 	end
 	local function CardNotes()
-		if track then
-			return track.name.." - end-of-day balances, walked back from the last known one."
+		if #shown > 0 then
+			return "End-of-day balances for the characters ticked in the Total picker, walked back from each last known balance."
 		end
-		if selectedMember then
-			if selectedMember.balance == nil then
-				return "No balance has been recorded for this character yet."
-			end
-			if selectedMember.gap then
-				return "The daily ledger has a hole somewhere, so this line cannot be drawn."
-			end
-		end
-		return "No drawable balance for this character in this window."
+		return "No ticked character has a drawable balance in this window."
 	end
 	if card then
 		card.noteTitle = CardLabel()
 		card.noteText = CardNotes()
 	end
 
-	-- The corner shows the selected character's balance and what it earned per
-	-- day over the window, averaged over the days that have data so a day
-	-- nothing happened does not drag it down.
+	-- The corner sums the drawn lines: their combined balance and their
+	-- combined daily income over the days that have data.
 	if economyWidgets.graphTotal then
-		if track then
-			local days = 0
-			for index = 1, #data.days do
-				if track.daySet and track.daySet[data.days[index].key] then
-					days = days + 1
+		if #shown > 0 then
+			local balance, income = 0, 0
+			local daySet, dayCount = {}, 0
+			for index = 1, #shown do
+				local track = shown[index]
+				balance = balance + (track.balance or 0)
+				income = income + (track.income or 0)
+				for day in pairs(track.daySet or {}) do
+					if not daySet[day] then
+						daySet[day] = true
+						dayCount = dayCount + 1
+					end
 				end
 			end
-			local text = ColorMarkup(track.color)..track.name.."|r  "..ns.MoneyColored(track.balance or 0)
-			if days > 0 then
-				text = text.."   |cff8f8f8f·|r   "..ns.MoneyColored(math.floor((track.income or 0) / days + 0.5))
-					.."|cff8f8f8f a day over "..days..(days == 1 and " day|r" or " days|r")
+			local text = (#shown == 1 and shown[1].name or (#shown.." characters")).."  "..ns.MoneyColored(balance)
+			if dayCount > 0 then
+				text = text.."   |cff8f8f8f·|r   "..ns.MoneyColored(math.floor(income / dayCount + 0.5))
+					.."|cff8f8f8f a day over "..dayCount..(dayCount == 1 and " day|r" or " days|r")
 			end
 			economyWidgets.graphTotal:SetText(text)
 		else
-			economyWidgets.graphTotal:SetText("|cff8f8f8fNo balance for this character|r")
+			economyWidgets.graphTotal:SetText("|cff8f8f8fNo ticked character has a balance|r")
 		end
 	end
 	economyWidgets.graphTotalData = data
@@ -182,7 +167,7 @@ local function RefreshEconomyGraph()
 		SetCornerLabel(economyWidgets.graphDaysButton, GraphDaysLabel(economyWidgets.graphDays or 14))
 	end
 
-	if not track then
+	if #shown == 0 then
 		plot:Hide()
 		if graph.footer then
 			graph.footer:SetText("")
@@ -190,19 +175,10 @@ local function RefreshEconomyGraph()
 		if card then
 			card.title:SetText(CardLabel())
 			card.noteText = CardNotes()
-			if not selectedMember then
-				card.body:SetText("No record for this character yet. Log in with it and Tally will read the balance.")
-			elseif selectedMember.balance == nil then
-				card.body:SetText("No balance has been recorded for this character yet: Tally reads it as soon as the character is logged in.")
-			elseif selectedMember.gap then
-				card.body:SetText("Nothing to draw: the daily ledger has a hole somewhere, so this balance line cannot be drawn.")
-			else
-				card.body:SetText("There is no drawable balance for this character in this window.")
-			end
+			card.body:SetText("Nothing to draw for the ticked characters: no balance has been recorded yet, or the daily ledger has a hole in it. Tick another character in the Total picker, or log in with this one so Tally can read its balance.")
 		end
 		return
 	end
-
 	-- A signature of everything drawn; an unchanged signature returns early,
 	-- so lines are rebuilt only when the data moves. The window's length and
 	-- its day buckets are part of it: changing the days button changes what is
@@ -231,6 +207,7 @@ local function RefreshEconomyGraph()
 		return
 	end
 	economyWidgets.graphSignature = signature
+	economyWidgets.dayRows = {}
 
 	-- The per-character toggles that used to sit under the title are gone: the
 	-- plot takes the whole card and the body text is cleared.
@@ -335,7 +312,7 @@ local function RefreshEconomyGraph()
 		-- Each month has a colour of its own, so a window that crosses a month
 		-- boundary reads as two runs, and the day a month starts on carries its
 		-- name as well as its number.
-		local color = MONTH_COLORS[(tonumber(month) or 1) % #MONTH_COLORS + 1]
+		local color = MONTH_COLORS[((tonumber(month) or 1) - 1) % #MONTH_COLORS + 1]
 		local monthStart = (day == "01") or (slot == 1) or (previousMonth ~= month)
 		previousMonth = month
 
@@ -531,14 +508,15 @@ local function RefreshEconomyGraph()
 		graph.footer:SetJustifyH("LEFT")
 		graph.footer:SetTextColor(0.62, 0.62, 0.62)
 	end
-	local pileText = track and track.name or "this character"
+	local viewer = DisplayChar()
+	local pileText = viewer and (viewer.name or "this character") or "this character"
 	graph.footer:SetText(pileText.."  ·  points are end-of-day balances, walked back from the last known one\nhover a day for the exact balance, or a point for this character's number")
 end
 
 local function BuildEconomyGraph(daily)
 	local card = CreateListCard(daily, 0, -4, 730, 434, "Economy graph")
 	AddCardTitleNote(card, "Economy graph",
-		"End-of-day balance for the character selected in the viewer, walked back from the last known balance. Hover a day for the exact balance, or a point for the number.")
+		"End-of-day balances for the characters ticked in the Total picker, walked back from each last known balance. Hover a day for the exact balances, or a point for one character's number.")
 	local plot = CreateFrame("Frame", nil, card)
 	plot:SetPoint("TOPLEFT", card, "TOPLEFT", 14, -48)
 	plot:SetPoint("BOTTOMRIGHT", card, "BOTTOMRIGHT", -14, 52)
@@ -552,46 +530,32 @@ local function BuildEconomyGraph(daily)
 	economyWidgets.graphTotal:SetJustifyH("RIGHT")
 
 	local totalHit = CreateFrame("Frame", nil, card)
+	totalHit:EnableMouse(true)
 	totalHit:SetPoint("TOPLEFT", economyWidgets.graphTotal, "TOPLEFT", -8, 4)
 	totalHit:SetPoint("BOTTOMRIGHT", economyWidgets.graphTotal, "BOTTOMRIGHT", 4, -4)
 	totalHit:SetScript("OnEnter", function(self)
-		local data = economyWidgets.graphTotalData
-		local selected = economyWidgets.graphSelected
-		if not data then
-			return
-		end
+		local shown = economyWidgets.graphShown or {}
 		GameTooltip:SetOwner(self, "ANCHOR_TOP")
-		if not selected then
-			GameTooltip:AddLine("Economy graph", ACCENT[1], ACCENT[2], ACCENT[3])
-			GameTooltip:AddLine("No balance has been recorded for this character yet.", 1, 1, 1)
-			GameTooltip:Show()
-			return
-		end
-		local color = CharColor(selected.char)
-		GameTooltip:AddLine(selected.name, color[1], color[2], color[3])
-		local char = selected.char or {}
-		GameTooltip:AddLine("Level "..(char.level or 0).." "..(char.class or "?").."  ·  "
-			..(selected.faction or (ns.CharFaction and ns.CharFaction(char)) or "side unknown"), 1, 1, 1)
-		if selected.balance == nil then
-			GameTooltip:AddLine("No balance recorded yet.", 0.7, 0.7, 0.7, true)
-		elseif selected.gap then
-			GameTooltip:AddLine(ns.MoneyColored(selected.balance).."|cff9f9f9f - line not drawn (ledger gap)|r", 1, 1, 1)
+		GameTooltip:AddLine("Economy graph", ACCENT[1], ACCENT[2], ACCENT[3])
+		if #shown == 0 then
+			GameTooltip:AddLine("No balance has been recorded for the ticked characters yet.", 1, 1, 1)
 		else
-			GameTooltip:AddLine(ns.MoneyColored(selected.balance), 1, 1, 1)
-			local days = 0
-			for index = 1, #data.days do
-				if selected.daySet and selected.daySet[data.days[index].key] then
-					days = days + 1
+			for index = 1, #shown do
+				local track = shown[index]
+				local color = track.color or CharColor(track.char)
+				GameTooltip:AddLine(track.name, color[1], color[2], color[3])
+				if track.balance == nil then
+					GameTooltip:AddLine("No balance recorded yet.", 0.7, 0.7, 0.7, true)
+				elseif track.gap then
+					GameTooltip:AddLine(ns.MoneyColored(track.balance).."|cff9f9f9f - line not drawn (ledger gap)|r", 1, 1, 1)
+				else
+					GameTooltip:AddLine(ns.MoneyColored(track.balance), 1, 1, 1)
 				end
-			end
-			if days > 0 then
-				GameTooltip:AddLine("|cff9f9f9f"..ns.MoneyColored(math.floor((selected.income or 0) / days + 0.5))
-					.." a day over "..days..(days == 1 and " day" or " days").."|r", 1, 1, 1)
 			end
 		end
 		GameTooltip:AddLine(" ")
-		GameTooltip:AddLine("The graph follows the character selected in the viewer.", 0.7, 0.7, 0.7, true)
-		GameTooltip:AddLine("Hover a day for the exact balance, or a point for this character's number.", 0.7, 0.7, 0.7, true)
+		GameTooltip:AddLine("The graph follows the characters ticked in the Total picker.", 0.7, 0.7, 0.7, true)
+		GameTooltip:AddLine("Hover a day for the exact balances, or a point for one character's number.", 0.7, 0.7, 0.7, true)
 		GameTooltip:Show()
 	end)
 	totalHit:SetScript("OnLeave", function()
@@ -622,6 +586,25 @@ local function BuildEconomyGraph(daily)
 		GameTooltip:Hide()
 	end)
 	economyWidgets.graphDaysButton = daysButton
+
+	-- The characters button opens the same Total picker every other Total
+	-- view uses; its ticks drive this graph too.
+	local charsButton = CreateCornerButton(card, -12, -26)
+	charsButton:ClearAllPoints()
+	charsButton:SetPoint("RIGHT", daysButton, "LEFT", -6, 0)
+	SetCornerLabel(charsButton, "characters")
+	charsButton:SetScript("OnClick", function()
+		ns.ShowCharPicker("levels", not (ns.charPickers.levels and ns.charPickers.levels.shown))
+	end)
+	charsButton:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_BOTTOMRIGHT")
+		GameTooltip:AddLine("Characters", ACCENT[1], ACCENT[2], ACCENT[3])
+		GameTooltip:AddLine("Tick the characters to draw. The same ticks drive the combined figures, the levelling graph and this one.", 1, 1, 1, true)
+		GameTooltip:Show()
+	end)
+	charsButton:SetScript("OnLeave", function()
+		GameTooltip:Hide()
+	end)
 end
 
 ns.BuildEconomyGraph, ns.RefreshEconomyGraph = BuildEconomyGraph, RefreshEconomyGraph

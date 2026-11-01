@@ -40,6 +40,7 @@ do
 	local AURA_REFRESH_MAX = 300
 	local aurasAnnounced = false
 	local aurasScanFailed = false
+	local scanStartedAt = 0
 
 	-- The campfire figures come from the two auras the campfire system uses: the
 	-- welcoming fire itself (whose time is the sitting time Tally can honestly
@@ -409,10 +410,13 @@ do
 		local isBuffs = (bucketField == "buffs")
 		local campBuff = isBuffs and CampfireBuffName() or nil
 		local camp = auras.camp
-		if not camp then
+		if type(camp) ~= "table" then
 			camp = { seconds = 0, visits = 0, benefits = 0 }
 			auras.camp = camp
 		end
+		camp.seconds = tonumber(camp.seconds) or 0
+		camp.visits = tonumber(camp.visits) or 0
+		camp.benefits = tonumber(camp.benefits) or 0
 		-- Old records may already carry the one-time migration flag from an
 		-- earlier pass that ran before the visit count was corrected. Recheck
 		-- on each scan so a stale benefits total cannot survive that flag.
@@ -442,7 +446,7 @@ do
 				misses[name] = nil
 				local lower = string.lower(name)
 				local entry = bucket[name]
-				if not entry then
+				if type(entry) ~= "table" then
 					entry = {
 						count = 0, seconds = 0,
 						firstAt = now, lastAt = now, updatedAt = now,
@@ -454,6 +458,8 @@ do
 					end
 					bucket[name] = entry
 				end
+				entry.count = tonumber(entry.count) or 0
+				entry.seconds = tonumber(entry.seconds) or 0
 				-- The spell id is kept beside the name so a hover can ask the
 				-- client what the aura does, long after it has worn off: the
 				-- window describes buffs that are not up any more.
@@ -535,10 +541,14 @@ do
 		for name in pairs(seen) do
 			if not present[name] then
 				local missed = (misses[name] or 0) + 1
-				if missed >= AURA_MISS then
+				if missed >= AURA_MISS and (ns.Now() - scanStartedAt) > 10 then
 					seen[name] = nil
 					misses[name] = nil
 				else
+					-- The client can answer "no aura" while it settles after a
+					-- login; in the first seconds a miss does not forget an
+					-- aura that was already known, so its return is not a new
+					-- gain.
 					misses[name] = missed
 				end
 			end
@@ -550,6 +560,9 @@ do
 	local function ScanAurasTick()
 		if not AurasUsable() then
 			return
+		end
+		if scanStartedAt == 0 then
+			scanStartedAt = ns.Now()
 		end
 		local char = ns.GetChar()
 		if not char then
@@ -582,3 +595,9 @@ end
 -- Owner namespace. The ticker calls the scan; this is the same function.
 ns.auras = {}
 ns.auras.Scan = ns.ScanAurasTick
+
+-- A character switch starts the settling grace again, so a late answer from
+-- the new character's client cannot forget its active auras.
+function ns.auras.ResetScanGrace()
+	scanStartedAt = 0
+end

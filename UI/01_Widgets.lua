@@ -630,6 +630,7 @@ local function FillCardRows(card, entries, leftMax, tall)
 				row.mid2:SetText("")
 			end
 			row.tip = nil
+			row.click = nil
 			row.barData = nil
 			row.barTrack:Hide()
 			row.barFill:Hide()
@@ -682,6 +683,7 @@ local function FillCardRows(card, entries, leftMax, tall)
 			row.mid2:SetText("")
 		end
 		row.tip = nil
+		row.click = nil
 		row.barData = nil
 		row.barTrack:Hide()
 		row.barFill:Hide()
@@ -743,6 +745,7 @@ end
 -- card.noteTitle, which is used instead.
 local function AddCardTitleNote(card, title, note)
 	local hit = CreateFrame("Frame", nil, card)
+	hit:EnableMouse(true)
 	hit:SetPoint("TOPLEFT", card, "TOPLEFT", 8, -2)
 	hit:SetPoint("TOPRIGHT", card, "TOPRIGHT", -8, -2)
 	hit:SetHeight(22)

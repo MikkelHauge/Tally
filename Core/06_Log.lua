@@ -197,10 +197,11 @@ local function RecordValue(key, value)
 end
 
 local function ThresholdText(data)
+	data = data or {}
 	local group = THRESHOLD_GROUPS[data.group]
-	local threshold = data.threshold
-	if not group then
-		return (data.group and tostring(data.group) or "Milestone")..(threshold and (" "..tostring(threshold)) or "")
+	local threshold = tonumber(data.threshold)
+	if not group or not threshold then
+		return ((data.group and tostring(data.group)) or "Milestone")..(threshold and (" "..tostring(threshold)) or "")
 	end
 	local formatted
 	if group.format == "money" then
@@ -227,7 +228,7 @@ function ns.EventText(event)
 	local kind = event.kind or "event"
 	if kind == "first" then
 		local label = data.label or FIRST_LABELS[data.kind or ""] or "First"
-		if data.name and data.name ~= label and not (data.kind == "quest" and string.find(data.name, "^First")) then
+		if data.name and data.name ~= label and not (data.kind == "quest" and type(data.name) == "string" and string.find(data.name, "^First")) then
 			return label.." · "..tostring(data.name)
 		end
 		return label

@@ -129,24 +129,24 @@ local function RefreshExplore()
 		end
 	end
 	SetTile(exploreWidgets.tiles[2], tostring(runs), newestInstance and ("Latest: "..newestInstance.name) or "none entered yet")
-	SetTile(exploreWidgets.tiles[3], ns.FormatDistance(explore.distance), "approximate, on foot")
+	local mountedDistance = explore.distanceMounted or 0
+	local onFootDistance = explore.distanceOnFoot
+	if onFootDistance == nil then
+		onFootDistance = math.max(0, (explore.distance or 0) - mountedDistance)
+	end
+	SetTile(exploreWidgets.tiles[3], ns.FormatDistance(onFootDistance), "approximate")
 	SetTile(exploreWidgets.tiles[4], ns.FormatDuration(explore.flightSeconds, true), (explore.flights or 0) > 0 and (explore.flights.." flights") or "no flights yet")
 
 	-- The quests boxes: how many quests were completed, the experience read
 	-- after a turn-in, and the reward money booked to them. Every figure is
 	-- only what the client actually reported, so a dash means "not read yet".
-	local questGold = char.gold and char.gold.income and char.gold.income.quest
 	SetTile(exploreWidgets.tiles[5], tostring(char.quests or 0), "since "..ns.FormatDate(char.created))
 	if char.questXp then
 		SetTile(exploreWidgets.tiles[6], ns.FormatNumber(char.questXp), "only what was read at hand-ins")
 	else
 		SetTile(exploreWidgets.tiles[6], "-", "no quest experience read yet")
 	end
-	if questGold then
-		SetTile(exploreWidgets.tiles[7], ns.MoneyString(questGold), "reward money booked to quests")
-	else
-		SetTile(exploreWidgets.tiles[7], "-", "no quests have rewarded gold yet")
-	end
+	SetTile(exploreWidgets.tiles[7], ns.FormatDistance(mountedDistance), "approximate")
 	-- Time on a mount, read from the client's own answer once a second. Where
 	-- the client cannot say, the box says so rather than showing a zero that
 	-- would read as "never mounted".
@@ -160,6 +160,30 @@ local function RefreshExplore()
 	else
 		SetTile(exploreWidgets.tiles[8], "-", "Tally cannot tell here")
 	end
+
+	-- Both distance boxes answer a hover with the share of the whole, so the
+	-- split is readable without adding a third number to the row.
+	local function DistanceTip(tile, own, other, ownLabel)
+		tile:EnableMouse(true)
+		tile:SetScript("OnEnter", function(self)
+			local total = own + other
+			GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+			GameTooltip:AddLine("Distance", ACCENT[1], ACCENT[2], ACCENT[3])
+			if total > 0 then
+				GameTooltip:AddLine(ns.FormatDistance(own).." "..ownLabel.." ("..string.format("%.0f%%", own / total * 100)..")", 1, 1, 1)
+				GameTooltip:AddLine(ns.FormatDistance(other).." "..(ownLabel == "on foot" and "mounted" or "on foot").." ("..string.format("%.0f%%", other / total * 100)..")", 1, 1, 1)
+				GameTooltip:AddLine("Approximate, from world positions; flight paths are not counted.", 0.7, 0.7, 0.7, true)
+			else
+				GameTooltip:AddLine("No distance recorded yet.", 0.7, 0.7, 0.7, true)
+			end
+			GameTooltip:Show()
+		end)
+		tile:SetScript("OnLeave", function()
+			GameTooltip:Hide()
+		end)
+	end
+	DistanceTip(exploreWidgets.tiles[3], onFootDistance, mountedDistance, "on foot")
+	DistanceTip(exploreWidgets.tiles[7], mountedDistance, onFootDistance, "mounted")
 
 	-- Tall rows: the place on the left, active time on the right, and visits
 	-- plus the first day seen on the detail line. Only active time is
@@ -211,11 +235,11 @@ local function RefreshExplore()
 end
 
 local function BuildExplorePage(page)
-	CreateTileRow(page, -4, { "Zones Visited", "Dungeons", "Distance", "Flight time" }, exploreWidgets.tiles, false)
+	CreateTileRow(page, -4, { "Zones Visited", "Dungeons", "Distance on foot", "Flight time" }, exploreWidgets.tiles, false)
 	-- The row under that one, four boxes of the same size as the ones above:
 	-- quests handed in, the experience read at those hand-ins, the reward
 	-- money booked to them, and the time Tally saw the character on a mount.
-	local secondRow = { "Quests completed", "Quest XP", "Quest gold", "Time mounted" }
+	local secondRow = { "Quests completed", "Quest XP", "Distance mounted", "Time mounted" }
 	for index = 1, #secondRow do
 		local tile = CreateTile(page, secondRow[index])
 		tile:SetSize(TILE_WIDTH, TILE_HEIGHT)

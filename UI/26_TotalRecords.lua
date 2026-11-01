@@ -161,6 +161,9 @@ local function RefreshTotalRecords()
 		repairRemark = "all characters"
 	end
 	AddRecord("Money", "Repair cost total", ns.MoneyColored(repairTotal), repairHolder, repairRemark)
+	AddRecord("Money", "Most income from quests",
+		records.mostQuestGold and ns.MoneyColored(records.mostQuestGold.value),
+		records.mostQuestGold)
 
 	AddRecord("World", "Most zones visited",
 		records.mostZones and (tostring(records.mostZones.count)..(records.mostZones.count == 1 and " zone" or " zones")),
@@ -183,6 +186,25 @@ local function RefreshTotalRecords()
 	AddRecord("World", "Fewest deaths",
 		records.fewestDeaths and (tostring(records.fewestDeaths.count)..(records.fewestDeaths.count == 1 and " death" or " deaths")),
 		records.fewestDeaths, records.fewestDeaths and ns.FormatDuration(records.fewestDeaths.tracked))
+
+	AddRecord("Social", "Most mails sent",
+		records.mostMailSent and (ns.FormatNumber(records.mostMailSent.count)..(records.mostMailSent.count == 1 and " mail" or " mails")),
+		records.mostMailSent)
+	AddRecord("Social", "Most mails received",
+		records.mostMailReceived and (ns.FormatNumber(records.mostMailReceived.count)..(records.mostMailReceived.count == 1 and " mail" or " mails")),
+		records.mostMailReceived)
+	AddRecord("Social", "Most messages sent",
+		records.mostMessagesSent and (ns.FormatNumber(records.mostMessagesSent.count)..(records.mostMessagesSent.count == 1 and " message" or " messages")),
+		records.mostMessagesSent)
+	AddRecord("Social", "Most whispers received",
+		records.mostWhispersReceived and (ns.FormatNumber(records.mostWhispersReceived.count)..(records.mostWhispersReceived.count == 1 and " whisper" or " whispers")),
+		records.mostWhispersReceived)
+	AddRecord("Social", "Most duels won",
+		records.mostDuelsWon and (ns.FormatNumber(records.mostDuelsWon.count)..(records.mostDuelsWon.count == 1 and " duel" or " duels")),
+		records.mostDuelsWon)
+	AddRecord("Social", "Most duels lost",
+		records.mostDuelsLost and (ns.FormatNumber(records.mostDuelsLost.count)..(records.mostDuelsLost.count == 1 and " duel" or " duels")),
+		records.mostDuelsLost)
 
 	AddRecord("Items and professions", "Best find",
 		records.bestFind and ns.MoneyColored(records.bestFind.value),

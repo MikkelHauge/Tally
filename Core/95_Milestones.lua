@@ -46,7 +46,7 @@ local function Store()
 	if type(store.future) ~= "table" then
 		store.future = {}
 	end
-	for _, key in ipairs({ "quests", "gold", "goldSpent", "recipes", "professionSkills", "kills", "deaths", "dungeons", "bosses", "loot", "crafted", "distance" }) do
+	for _, key in ipairs({ "quests", "gold", "goldSpent", "recipes", "professionSkills", "kills", "deaths", "dungeons", "bosses", "loot", "lootQuality", "crafted", "distance", "distanceOnFoot", "distanceMounted", "flightTime", "afk" }) do
 		if type(store.thresholds[key]) ~= "table" then
 			store.thresholds[key] = {}
 		end
@@ -58,15 +58,22 @@ ns.milestoneThresholds = {
 	quests = { 10, 25, 50, 100, 250, 500, 1000, 2000, 5000, 10000, 25000, 50000 },
 	gold = { 10000, 100000, 1000000, 10000000, 100000000, 1000000000, 10000000000, 100000000000, 1000000000000, 10000000000000 },
 	goldSpent = { 10000, 50000, 100000, 500000, 1000000, 10000000, 100000000, 1000000000, 10000000000, 10000000000000 },
-	recipes = { 10, 25, 50, 100, 200, 300 },
-	professionSkills = { 75, 150, 225, 300 },
+	recipes = { 10, 25, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1250, 1500, 2000 },
+	professionSkills = { 75, 150, 225, 300, 375, 450, 525, 600, 700 },
 	kills = { 10, 100, 500, 1000, 5000, 10000, 25000, 50000, 100000, 250000, 500000, 1000000, 2500000, 5000000, 10000000 },
 	deaths = { 1, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000 },
 	dungeons = { 1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000 },
 	bosses = { 1, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000 },
 	loot = { 100, 500, 1000, 5000, 10000, 25000, 50000, 100000, 250000, 500000, 1000000, 2500000, 5000000 },
+	-- One ladder per quality, keyed by quality id: 0 is grey, 6 artifact.
+	lootQuality = { 1, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000 },
 	crafted = { 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000, 100000 },
 	distance = { 10, 100, 500, 1000, 5000, 10000, 25000, 50000, 100000 },
+	distanceOnFoot = { 1, 10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000, 100000 },
+	distanceMounted = { 1, 10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000, 100000 },
+	-- Time ladders are in seconds; the window labels them in hours.
+	flightTime = { 3600, 18000, 36000, 90000, 180000, 360000, 900000, 1800000, 3600000 },
+	afk = { 3600, 18000, 36000, 90000, 180000, 360000, 900000, 1800000, 3600000 },
 }
 
 local function ObservedValue(value)
@@ -247,6 +254,16 @@ function ns.NoteBossMilestone(count, observed)
 	ns.NoteMilestoneThreshold("bosses", "bosses", tonumber(count), observed, "encounter_end")
 end
 
+-- Called from the loot path once a quality bucket holds its new count. The
+-- quality id keys the bucket, so grey, common, uncommon and the rest each get
+-- their own milestone ladder.
+function ns.NoteLootQualityMilestone(quality, value)
+	if quality == nil then
+		return
+	end
+	ns.NoteMilestoneThreshold("lootQuality", tostring(quality), tonumber(value), nil, "loot_message")
+end
+
 function ns.NoteLootMilestone(count, observed)
 	ns.NoteMilestoneThreshold("loot", "loot", tonumber(count), observed, "chat_loot")
 end
@@ -272,6 +289,26 @@ end
 function ns.NoteDistanceMilestone(yards, observed)
 	local km = (tonumber(yards) or 0) * 0.9144 / 1000
 	ns.NoteMilestoneThreshold("distance", "distance", math.floor(km), observed, "unit_position")
+end
+
+local function DistanceKm(yards)
+	return math.floor((tonumber(yards) or 0) * 0.9144 / 1000)
+end
+
+function ns.NoteFootDistanceMilestone(yards)
+	ns.NoteMilestoneThreshold("distanceOnFoot", "distanceOnFoot", DistanceKm(yards), nil, "unit_position")
+end
+
+function ns.NoteMountedDistanceMilestone(yards)
+	ns.NoteMilestoneThreshold("distanceMounted", "distanceMounted", DistanceKm(yards), nil, "unit_position")
+end
+
+function ns.NoteFlightTimeMilestone(seconds)
+	ns.NoteMilestoneThreshold("flightTime", "flightTime", math.floor(tonumber(seconds) or 0), nil, "taxi")
+end
+
+function ns.NoteAfkMilestone(seconds)
+	ns.NoteMilestoneThreshold("afk", "afk", math.floor(tonumber(seconds) or 0), nil, "unit_afk")
 end
 
 function ns.NoteGoldSpentMilestone(char, observed)

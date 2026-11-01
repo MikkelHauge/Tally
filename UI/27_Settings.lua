@@ -227,7 +227,7 @@ local function BuildSettingsPage(page)
 	local resetButton = CreateFrame("Button", nil, page, "UIPanelButtonTemplate")
 	resetButton:SetSize(260, 22)
 	resetButton:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", 12, 8)
-	resetButton:SetText("Reset this character's statistics...")
+	resetButton:SetText("Reset selected characters data")
 	resetButton:SetScript("OnClick", function()
 		local char = ns.GetChar()
 		StaticPopup_Show("TALLY_RESET_CHARACTER", char and ns.DisplayName(char) or "this character")
@@ -261,6 +261,12 @@ local function BuildSettingsPage(page)
 	deleteButton:SetScript("OnLeave", function()
 		GameTooltip:Hide()
 	end)
+
+	-- Which build this is, in the page's bottom-right corner: the title bar
+	-- and the login line no longer carry the version.
+	local versionText = page:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
+	versionText:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", -14, 14)
+	versionText:SetText("v"..ns.GetAddonVersion())
 end
 
 local function RefreshSettings()

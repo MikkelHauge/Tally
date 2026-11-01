@@ -21,6 +21,7 @@ local moneyContext = {
 	pendingMoney = nil,          -- { key, value, at }: pending reading
 	lastMoneyReading = nil,      -- last balance given while in the world
 	moneySettled = false,        -- the session's start balance is adopted
+	sawUnsettledChange = false,  -- PLAYER_MONEY fired before the settle
 }
 ns.moneyContext = moneyContext
 ns.repairWatch = moneyContext.repair
@@ -107,6 +108,13 @@ end
 -- balance and the change list, since only they know the reading that
 -- produced the change.
 local function BookChange(gold, delta, category, at)
+	if type(gold) ~= "table" then
+		return
+	end
+	if type(gold.income) ~= "table" then gold.income = {} end
+	if type(gold.expenses) ~= "table" then gold.expenses = {} end
+	if type(gold.daily) ~= "table" then gold.daily = {} end
+	if type(gold.unclassified) ~= "table" then gold.unclassified = {} end
 	local char = ns.GetChar()
 	at = at or Now()
 	if category == "unclassified" then
@@ -233,6 +241,11 @@ local function ApplyMoneyDelta(delta, newBalance, at)
 		return
 	end
 	local gold = char.gold
+	if type(gold) ~= "table" then
+		return
+	end
+	if type(gold.tx) ~= "table" then gold.tx = {} end
+	if type(gold.unclassified) ~= "table" then gold.unclassified = {} end
 	local now = at or Now()
 
 	-- A session open before the first balance reading was confirmed starts
@@ -318,7 +331,32 @@ local function ApplyMoneyDelta(delta, newBalance, at)
 		return
 	end
 
-	BookChange(gold, delta, category, now)
+	-- A completed trade reports both sides of its money exactly. Booking the
+	-- pair keeps trade income and trade expense from hiding one direction
+	-- behind the net change the purse reports.
+	local bookedGross = false
+	if ns.lastTradeGold then
+		local trade = ns.lastTradeGold
+		local given = trade.given or 0
+		local received = trade.received or 0
+		if trade.at and (now - trade.at) <= (TUNING.windowGrace + 5)
+			and received - given == delta then
+			-- The trade's own figures are better evidence than whichever
+			-- window happened to be open, so they also settle the category.
+			category = "trade"
+			ns.lastTradeGold = nil
+			bookedGross = true
+			if received > 0 then
+				BookChange(gold, received, "trade", now)
+			end
+			if given > 0 then
+				BookChange(gold, -given, "trade", now)
+			end
+		end
+	end
+	if not bookedGross then
+		BookChange(gold, delta, category, now)
+	end
 	if ns.NoteGoldSpentMilestone then
 		ns.NoteGoldSpentMilestone(char)
 	end
@@ -459,11 +497,24 @@ local function PollMoney(enteredWorld)
 					and char.gold.balance ~= money then
 					ns.Trace("reload settle: balance "..tostring(char.gold.balance).." -> "..tostring(money).." (booked as a change Tally did not see)")
 					ApplyMoneyDelta(money - char.gold.balance, money)
+					moneyContext.sawUnsettledChange = false
 					return
 				end
-				if char.gold.balance ~= money then
-					ns.Trace("session settled: balance "..tostring(char.gold.balance).." -> "..tostring(money).." (adopted, nothing booked)")
+				if char.gold.balance ~= nil and char.gold.balance ~= money then
+					if moneyContext.sawUnsettledChange then
+						-- The purse really moved while the settle was waiting:
+						-- the client fired PLAYER_MONEY, so this is not a stale
+						-- login reading but money that arrived in the session.
+						-- Book it (unclassified when no window explains it) so
+						-- the balance and the income total agree from the start,
+						-- instead of drifting apart until the next reload.
+						ns.Trace("settle: balance "..tostring(char.gold.balance).." -> "..tostring(money).." (booked, seen during the settle)")
+						ApplyMoneyDelta(money - char.gold.balance, money, now)
+					else
+						ns.Trace("session settled: balance "..tostring(char.gold.balance).." -> "..tostring(money).." (adopted, nothing booked)")
+					end
 				end
+				moneyContext.sawUnsettledChange = false
 				SetBalance(char, char.gold, money, now, "settle")
 				if char.gold.first == nil then
 					char.gold.first = money
@@ -496,11 +547,36 @@ local function PollMoney(enteredWorld)
 	if moneyContext.pendingMoney and moneyContext.pendingMoney.value == money then
 		if (now - moneyContext.pendingMoney.at) >= TUNING.moneyConfirm then
 			moneyContext.pendingMoney = nil
-			ApplyMoneyDelta(money - char.gold.balance, money)
+			if char.gold.balance == nil then
+				-- No stored balance to measure against (a brand-new record or
+				-- a character switched to in this same client session): adopt
+				-- the reading instead of subtracting from nil.
+				SetBalance(char, char.gold, money, now, "adopt")
+			else
+				ApplyMoneyDelta(money - char.gold.balance, money)
+			end
 		end
 		return
 	end
 	moneyContext.pendingMoney = { key = ns.charKey, value = money, at = now }
+end
+
+-- Called from the PLAYER_MONEY event, just before the poll: the client is
+-- reporting a move in the purse. During the settle window that is what
+-- separates a genuine change from a stale login reading - but only when the
+-- last steady-ish reading was the stored balance. If the client was still
+-- serving 0 (or another stale value), the event is the correction arriving,
+-- not money the session earned, and the settle keeps adopting it.
+function ns.NoteMoneyEvent()
+	if moneyContext.moneySettled then
+		return
+	end
+	local char = ns.GetChar()
+	local stored = char and char.gold and char.gold.balance
+	local pending = moneyContext.pendingMoney
+	if stored ~= nil and pending and pending.value == stored then
+		moneyContext.sawUnsettledChange = true
+	end
 end
 
 -- Clears the gold anchor of sessions recorded while the client reported a
@@ -674,6 +750,51 @@ function ns.MoneyOnLogout(char)
 		ns.Trace("logout: money reading ignored (client said "..tostring(money)..", last known "..tostring(known)..")")
 	end
 	moneyContext.pendingMoney = nil    -- the final reading is taken at face value
+end
+
+-- A character switched to in the same client session starts from an empty
+-- money context: no window belongs to it, nothing has been confirmed for it,
+-- and the settle has to run again. Without this the previous character's
+-- flags leak into the new one and its nil balance is subtracted from.
+function ns.ResetMoneyContext()
+	moneyContext.merchantShown = false
+	moneyContext.mailShown = false
+	moneyContext.tradeShown = false
+	moneyContext.auctionShown = false
+	moneyContext.trainerShown = false
+	moneyContext.closedAt.merchant = 0
+	moneyContext.closedAt.trainer = 0
+	moneyContext.closedAt.mail = 0
+	moneyContext.closedAt.trade = 0
+	moneyContext.closedAt.auction = 0
+	moneyContext.lootContextAt = 0
+	moneyContext.questGoldUntil = 0
+	moneyContext.pendingMoney = nil
+	moneyContext.lastMoneyReading = nil
+	moneyContext.moneySettled = false
+	moneyContext.sawUnsettledChange = false
+	moneyContext.repair.cost = 0
+	moneyContext.repair.at = 0
+	moneyContext.repair.paidAt = 0
+	moneyContext.repair.blocked = false
+	ns.lastTradeGold = nil
+end
+
+-- A completed trade can report both sides of its money exactly. When the two
+-- sides cancel out the purse reports no change at all, so the gross pair has
+-- to be booked here rather than waiting for a change event.
+function ns.BookTradeGold(given, received, at)
+	local char = ns.GetChar()
+	if not char or not char.gold or not ns.Tracks("economy") then
+		return
+	end
+	at = at or Now()
+	if (received or 0) > 0 then
+		BookChange(char.gold, received, "trade", at)
+	end
+	if (given or 0) > 0 then
+		BookChange(char.gold, -(given or 0), "trade", at)
+	end
 end
 
 ns.PollMoney = PollMoney

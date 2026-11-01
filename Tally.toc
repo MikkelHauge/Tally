@@ -1,8 +1,8 @@
-## Interface: 16001, 120105
+## Interface: 16001
 ## Title: Tally
 ## Notes: Character statistics: playtime, gold, combat, loot and exploration - recorded quietly in the background and shown in a clean dashboard.
 ## Author: Mikkel
-## Version: 1.0.6
+## Version: 20261101
 ## SavedVariables: TallyDB
 ## IconTexture: Interface\Icons\INV_Misc_Book_09
 
@@ -15,6 +15,7 @@ Core/50_Money.lua
 Core/60_Loot.lua
 Core/70_Auras.lua
 Core/80_Explore.lua
+Core/85_Social.lua
 Core/90_Professions.lua
 Core/92_ProfessionsCooldowns.lua
 Core/95_Milestones.lua
@@ -31,6 +32,7 @@ UI/15_Auction.lua
 UI/20_Overview.lua
 UI/20_Milestones.lua
 UI/20_Timeline.lua
+UI/20_Social.lua
 UI/20_Character.lua
 UI/21_Playtime.lua
 UI/22_EconomyState.lua

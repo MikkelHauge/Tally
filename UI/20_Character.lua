@@ -4,9 +4,11 @@
 local addonName, ns = ...
 
 local ACCENT, pageRefresh, BuildOverviewPage, RefreshOverview,
-	BuildMilestonesPage, RefreshMilestones, BuildTimelinePage, RefreshTimeline =
+	BuildMilestonesPage, RefreshMilestones, BuildTimelinePage, RefreshTimeline,
+	BuildSocialPage, RefreshSocial =
 	ns.ACCENT, ns.pageRefresh, ns.BuildOverviewPage, ns.RefreshOverview,
-	ns.BuildMilestonesPage, ns.RefreshMilestones, ns.BuildTimelinePage, ns.RefreshTimeline
+	ns.BuildMilestonesPage, ns.RefreshMilestones, ns.BuildTimelinePage, ns.RefreshTimeline,
+	ns.BuildSocialPage, ns.RefreshSocial
 
 local characterWidgets = { subview = "overview" }
 
@@ -18,6 +20,8 @@ local function RefreshCharacter()
 		RefreshMilestones()
 	elseif characterWidgets.subview == "timeline" then
 		RefreshTimeline()
+	elseif characterWidgets.subview == "social" then
+		RefreshSocial()
 	else
 		RefreshOverview()
 	end
@@ -33,6 +37,9 @@ local function SelectCharacterSubview(name)
 	end
 	if characterWidgets.timelineFrame then
 		characterWidgets.timelineFrame:SetShown(name == "timeline")
+	end
+	if characterWidgets.socialFrame then
+		characterWidgets.socialFrame:SetShown(name == "social")
 	end
 	local buttons = characterWidgets.subButtons or {}
 	for id, button in pairs(buttons) do
@@ -69,6 +76,7 @@ local function BuildCharacterPage(page)
 	AddSubButton("overview", "Overview")
 	AddSubButton("milestones", "Milestones")
 	AddSubButton("timeline", "Timeline")
+	AddSubButton("social", "Social")
 
 	local overview = CreateFrame("Frame", nil, page)
 	overview:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -26)
@@ -89,6 +97,13 @@ local function BuildCharacterPage(page)
 	timelineFrame:Hide()
 	characterWidgets.timelineFrame = timelineFrame
 	BuildTimelinePage(timelineFrame)
+
+	local socialFrame = CreateFrame("Frame", nil, page)
+	socialFrame:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -26)
+	socialFrame:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
+	socialFrame:Hide()
+	characterWidgets.socialFrame = socialFrame
+	BuildSocialPage(socialFrame)
 
 	SelectCharacterSubview("overview")
 	pageRefresh.overview = RefreshCharacter

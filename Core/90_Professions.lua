@@ -59,7 +59,8 @@ local function CleanCraftTally(store)
 				profession = only
 			end
 			if profession and type(store.crafts) == "table" and store.crafts[profession] then
-				store.crafts[profession] = math.max(0, (store.crafts[profession] or 0) - (tally.count or 0))
+				local tallyCount = type(tally) == "table" and (tonumber(tally.count) or 0) or 0
+				store.crafts[profession] = math.max(0, (store.crafts[profession] or 0) - tallyCount)
 			end
 			store.crafted[name] = nil
 			removed = removed + 1
@@ -486,12 +487,25 @@ end
 -- header positions were expanded, for CloseTradeSkillTree to restore.
 -- Headers are counted from the end, which survives the list shifting during
 -- expansion.
+-- The trade-skill list belongs to a window; asking after it closes returns
+-- nil on this client, which would make the numeric for loop throw.
+local function TradeSkillCount()
+	if type(GetNumTradeSkills) ~= "function" then
+		return 0
+	end
+	local ok, count = pcall(GetNumTradeSkills)
+	if ok and type(count) == "number" then
+		return count
+	end
+	return 0
+end
+
 local function OpenTradeSkillTree()
 	local opened = {}
 	local headers = 0
-	for index = GetNumTradeSkills(), 1, -1 do
-		local _, skillType, _, isExpanded = GetTradeSkillInfo(index)
-		if skillType == "header" or skillType == "subheader" then
+	for index = TradeSkillCount(), 1, -1 do
+		local okInfo, _, skillType, _, isExpanded = pcall(GetTradeSkillInfo, index)
+		if okInfo and (skillType == "header" or skillType == "subheader") then
 			headers = headers + 1
 			if not isExpanded and ExpandTradeSkillSubClass then
 				pcall(ExpandTradeSkillSubClass, index)
@@ -504,9 +518,9 @@ end
 
 local function CloseTradeSkillTree(opened)
 	local headers = 0
-	for index = GetNumTradeSkills(), 1, -1 do
-		local _, skillType = GetTradeSkillInfo(index)
-		if skillType == "header" or skillType == "subheader" then
+	for index = TradeSkillCount(), 1, -1 do
+		local okInfo, _, skillType = pcall(GetTradeSkillInfo, index)
+		if okInfo and (skillType == "header" or skillType == "subheader") then
 			headers = headers + 1
 			if opened[headers] and CollapseTradeSkillSubClass then
 				pcall(CollapseTradeSkillSubClass, index)
@@ -640,11 +654,17 @@ local function CaptureCraftRecipes(char)
 		return false
 	end
 	local total
-	if GetNumCrafts then
-		total = GetNumCrafts()
+	if type(GetNumCrafts) == "function" then
+		local ok, count = pcall(GetNumCrafts)
+		if ok and type(count) == "number" then
+			total = count
+		end
 	end
-	if (not total or total == 0) and GetNumCraftSpells then
-		total = GetNumCraftSpells()
+	if (not total or total == 0) and type(GetNumCraftSpells) == "function" then
+		local ok, count = pcall(GetNumCraftSpells)
+		if ok and type(count) == "number" then
+			total = count
+		end
 	end
 	if not total or total == 0 then
 		ns.Trace("recipes: the craft window listed nothing yet")
@@ -1409,6 +1429,15 @@ local function CountCraft(spellID)
 	end
 	local entry = store.recipes[profession]
 	local itemID = type(entry) == "table" and type(entry.items) == "table" and entry.items[name] or nil
+	if not itemID and ns.ItemIDForName then
+		-- The recipe map can be incomplete on a fresh scan. The item name is
+		-- enough to find the id elsewhere, and the id is what the credit
+		-- ledger uses to stop the item event counting the same craft again.
+		local okID, foundID = pcall(ns.ItemIDForName, name)
+		if okID and foundID then
+			itemID = foundID
+		end
+	end
 	local tally = store.crafted[name]
 	if tally then
 		tally.count = tally.count + 1

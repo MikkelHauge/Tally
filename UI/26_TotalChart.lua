@@ -212,6 +212,13 @@ local function RefreshTotalChart()
 	if not totalWidgets.plot then
 		return
 	end
+	-- While the levelling sub-view is hidden the plot has no real size; a
+	-- draw now would cache degenerate geometry under the current signature.
+	local levelsFrame = totalWidgets.levelsFrame
+	if (levelsFrame and not levelsFrame:IsShown()) or not totalWidgets.plot:IsShown() then
+		totalWidgets.chartSignature = nil
+		return
+	end
 	local plot = totalWidgets.plot
 	local card = totalWidgets.chartCard
 	local series, levels = LevelWindow()
@@ -248,6 +255,7 @@ local function RefreshTotalChart()
 	-- range is part of it: moving a slider changes the axes without moving a
 	-- number, and that has to redraw.
 	local signature = (totalWidgets.rangeFrom or 0) * 1000003 + (totalWidgets.rangeTo or 0) * 15485863
+	signature = signature + ((totalWidgets.rangeMode == "auto") and 1 or 2) * 3571
 	signature = signature + #series + #levels
 	signature = signature + (totalWidgets.withoutData or 0) * 7919
 	signature = signature + (totalWidgets.hiddenCount or 0) * 104729
@@ -257,6 +265,12 @@ local function RefreshTotalChart()
 		local points = series[index].points
 		for position = 1, #points do
 			total = total + (points[position].seconds or 0)
+		end
+		-- The character identity is part of it too: two characters with the
+		-- same numbers would otherwise keep the old legend and name.
+		local key = series[index].key or series[index].name or ""
+		for position = 1, #key do
+			signature = signature + string.byte(key, position) * position
 		end
 		signature = signature + index * 7919 + #points * 131 + (total % 100003) + ((series[index].tracked or 0) % 99991)
 	end

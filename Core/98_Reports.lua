@@ -245,7 +245,7 @@ local function BuildPlaytimeReport(char, lines)
 		lines[#lines + 1] = Label("Level "..(char.level or 0).." so far:").." "..FormatDuration(played.levelTime)..GRAY.." on this level (game /played)|r"
 	end
 
-	local history = char.levels.history
+	local history = (char.levels and char.levels.history) or {}
 	if #history > 0 then
 		lines[#lines + 1] = Label("Recent level-ups:")..""
 		-- The install snapshot is not a level time: it marks where watching
@@ -494,9 +494,11 @@ local function BuildLootReport(char, lines)
 end
 
 local function BuildExploreReport(char, lines)
-	local explore = char.explore
-	local zoneCount = ns.CountTable(explore.zones)
-	local recent = explore.recentFirsts[#explore.recentFirsts]
+	local explore = char.explore or {}
+	local zones = explore.zones or {}
+	local recentFirsts = explore.recentFirsts or {}
+	local zoneCount = ns.CountTable(zones)
+	local recent = recentFirsts[#recentFirsts]
 	local latestText = ""
 	if recent then
 		latestText = GRAY..", latest "..recent.name.." on "..FormatDate(recent.at).."|r"
@@ -521,7 +523,7 @@ local function BuildExploreReport(char, lines)
 
 	-- Per-zone time, which the zone count alone cannot show.
 	local zoneTime = {}
-	for name, entry in pairs(explore.zones) do
+	for name, entry in pairs(explore.zones or {}) do
 		if (entry.seconds or 0) > 0 then
 			zoneTime[#zoneTime + 1] = { name = name, seconds = entry.seconds or 0 }
 		end
@@ -543,18 +545,18 @@ local function BuildExploreReport(char, lines)
 		end
 	end
 
-	if #explore.recentFirsts > 0 then
+	if #recentFirsts > 0 then
 		lines[#lines + 1] = Label("Recently first visited:")..""
-		local first = math.max(1, #explore.recentFirsts - 4)
-		for index = #explore.recentFirsts, first, -1 do
-			local entry = explore.recentFirsts[index]
+		local first = math.max(1, #recentFirsts - 4)
+		for index = #recentFirsts, first, -1 do
+			local entry = recentFirsts[index]
 			lines[#lines + 1] = GRAY.."  "..entry.name.." - "..FormatDate(entry.at).." (level "..(entry.level or "?")..")|r"
 		end
 	end
 
 	local dungeonList = {}
 	local runs, bosses = 0, 0
-	for name, dungeon in pairs(explore.dungeons) do
+	for name, dungeon in pairs(explore.dungeons or {}) do
 		runs = runs + (dungeon.entered or 0)
 		bosses = bosses + (dungeon.bosses or 0)
 		dungeonList[#dungeonList + 1] = { name = name, entered = dungeon.entered or 0, bosses = dungeon.bosses or 0, seconds = dungeon.seconds or 0 }
@@ -754,8 +756,8 @@ function ns.BuildDebugText()
 	end
 	if dbgChar then
 		lines[#lines + 1] = "combat counters: fights="..tostring(dbgChar.combat.fights or 0)..", combatSeconds="..tostring(dbgChar.combat.combatSeconds or 0)..", tracked="..tostring(dbgChar.tracked)..", inCombatNow="..tostring(UnitAffectingCombat and UnitAffectingCombat("player") and true or false)
-		lines[#lines + 1] = "kills: source="..tostring(ns.killSource)..", nameplates="..tostring(ns.kills.NameplatesActive and ns.kills.NameplatesActive())..", heard="..tostring(dbgChar.combat.killsHeard)..", total="..tostring(dbgChar.combat.kills or 0)
-		if ns.kills.DebugText then
+		lines[#lines + 1] = "kills: source="..tostring(ns.killSource)..", nameplates="..tostring(ns.kills and ns.kills.NameplatesActive and ns.kills.NameplatesActive())..", heard="..tostring(dbgChar.combat.killsHeard)..", total="..tostring(dbgChar.combat.kills or 0)
+		if ns.kills and ns.kills.DebugText then
 			lines[#lines + 1] = ns.kills.DebugText()
 		end
 		-- What the level-times reader makes of this character's readings, so a

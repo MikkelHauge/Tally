@@ -320,15 +320,15 @@ local function RecordPurchase(ah, at, name, quality, units, price, itemID)
 	day.boughtUnits = day.boughtUnits + units
 	if not ah.bestBuy or price > (ah.bestBuy.price or 0) then
 		ah.bestBuy = { name = name, quality = quality, price = price, at = at, units = units, id = itemID }
-	if ns.NoteRecord then
-		ns.NoteRecord("auction.bestBuy", price, at)
+		if ns.NoteRecord then
+			ns.NoteRecord("auction.bestBuy", price, at)
+		end
 	end
 	if ns.NoteRecentEvent then
 		ns.NoteRecentEvent("auction", {
 			at = at, how = "auction_purchase", evidence = "auction_invoice",
 			data = { action = "bought", name = name, units = units, price = price },
 		})
-	end
 	end
 	if ns.NoteMilestoneFirst then
 		ns.NoteMilestoneFirst("auctionBuy", { name = name, at = at })
@@ -565,7 +565,7 @@ local function SnapshotClassicOwned()
 	end
 	local rows, counts = {}, {}
 	for index = 1, total do
-		local okRow, name, _, units, quality, _, _, _, _, _, buyout, bid, _, _, saleStatus =
+		local okRow, name, _, units, quality, _, _, _, _, _, buyout, bid, _, _, _, _, saleStatus =
 			pcall(GetAuctionItemInfo, "owner", index)
 		if okRow and type(name) == "string" then
 			local band

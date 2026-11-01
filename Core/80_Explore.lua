@@ -14,6 +14,7 @@ local inInstance = false
 local currentInstance
 local lastAreaKey
 local taxiActive = false
+local taxiResumeUntil = 0    -- a restored flight is trusted briefly while the client settles
 local lastPosition            -- { x, y, mapID } of the previous UnitPosition
 
 -- A zone has to hold for a few seconds before it is written to the record.
@@ -108,7 +109,8 @@ local function NoteZone(zone, isArrival)
 	-- last-seen zone to compare (a record written before this was kept), an
 	-- arrival that is not a first visit is not counted, and the next one can
 	-- be.
-	local firstVisit = entry.visits == 0 and entry.last == entry.first
+	local visits = tonumber(entry.visits) or 0
+	local firstVisit = visits == 0 and entry.last == entry.first
 	local counted = false
 	if firstVisit then
 		counted = true
@@ -116,14 +118,15 @@ local function NoteZone(zone, isArrival)
 		counted = true
 	end
 	if counted then
-		entry.visits = entry.visits + 1
+		visits = visits + 1
+		entry.visits = visits
 		-- An instance already notes its own entry in UpdateArea, with its
 		-- kind; adding a world-zone line here would duplicate the same place.
 		if not isInstance then
 			NoteVisit(explore, zone, now, false)
 		end
 	end
-	ns.Trace("zone: "..zone.." - "..(counted and (firstVisit and "first visit counted" or "return counted") or (isArrival and "no visit (same zone as the last one seen)" or "no visit (the session's first area)"))..", total "..entry.visits)
+	ns.Trace("zone: "..zone.." - "..(counted and (firstVisit and "first visit counted" or "return counted") or (isArrival and "no visit (same zone as the last one seen)" or "no visit (the session's first area)"))..", total "..tostring(visits))
 	explore.lastZone = zone
 	entry.last = now
 	entry.lastSeenAt = now
@@ -131,7 +134,7 @@ local function NoteZone(zone, isArrival)
 	if ns.NoteRecentEvent then
 		ns.NoteRecentEvent("zone", {
 			at = now, zone = zone, how = "zone_entered", evidence = "zone_event",
-			data = { name = zone, visits = entry.visits },
+			data = { name = zone, visits = visits },
 		})
 	end
 	currentZone = zone
@@ -248,6 +251,9 @@ local function CommitPendingZone(char, zone, pending)
 		level = pending.level,
 	}
 	explore.zones[zone] = entry
+	if type(explore.recentFirsts) ~= "table" then
+		explore.recentFirsts = {}
+	end
 	explore.recentFirsts[#explore.recentFirsts + 1] = { name = zone, at = pending.first, level = entry.level }
 	-- A first world-zone visit belongs in the recent list too. Instances note
 	-- themselves in UpdateArea with their kind, so they are not duplicated.
@@ -334,6 +340,9 @@ local function ExploreTick(char, explore, session, dead)
 	local onTaxi = UnitOnTaxi and UnitOnTaxi("player")
 	if explore then
 		if onTaxi then
+			-- The client has now confirmed the flight; a restored state no
+			-- longer needs its settling grace.
+			taxiResumeUntil = 0
 			if not taxiActive then
 				taxiActive = true
 				char.explore.flights = (char.explore.flights or 0) + 1
@@ -344,12 +353,24 @@ local function ExploreTick(char, explore, session, dead)
 				end
 			end
 			char.explore.flightSeconds = (char.explore.flightSeconds or 0) + 1
+			if ns.NoteFlightTimeMilestone then
+				ns.NoteFlightTimeMilestone(char.explore.flightSeconds)
+			end
 			if session then
 				session.flightSeconds = (session.flightSeconds or 0) + 1
 			end
 			lastPosition = nil
 		else
-			taxiActive = false
+			-- A flight restored from the last logout stays "in progress" for a
+			-- moment: the client can answer UnitOnTaxi late on the first
+			-- ticks, and a false answer there must not turn the same flight
+			-- into a second one.
+			if taxiResumeUntil > 0 and now < taxiResumeUntil then
+				-- still settling
+			else
+				taxiActive = false
+				taxiResumeUntil = 0
+			end
 			if not dead then
 				local x, y, z, mapID = UnitPosition("player")
 				if x and y and mapID then
@@ -359,7 +380,29 @@ local function ExploreTick(char, explore, session, dead)
 						-- Below 0.05 yards is float jitter; above 200 in one
 						-- tick is a teleport, not a step.
 						if distance > 0.05 and distance < 200 then
-							char.explore.distance = (char.explore.distance or 0) + distance
+							local before = (tonumber(char.explore.distance) or 0)
+							char.explore.distance = before + distance
+							-- The same step is credited to the mounted or the
+							-- on-foot bucket. A record with only the legacy
+							-- total seeds both buckets from it first, so the
+							-- split does not appear to start at zero.
+							if char.explore.distanceMounted == nil then
+								char.explore.distanceMounted = 0
+							end
+							if char.explore.distanceOnFoot == nil then
+								char.explore.distanceOnFoot = math.max(0, before - (char.explore.distanceMounted or 0))
+							end
+							if type(IsMounted) == "function" and IsMounted() then
+								char.explore.distanceMounted = char.explore.distanceMounted + distance
+								if ns.NoteMountedDistanceMilestone then
+									ns.NoteMountedDistanceMilestone(char.explore.distanceMounted)
+								end
+							else
+								char.explore.distanceOnFoot = char.explore.distanceOnFoot + distance
+								if ns.NoteFootDistanceMilestone then
+									ns.NoteFootDistanceMilestone(char.explore.distanceOnFoot)
+								end
+							end
 							char.explore.distanceAt = now
 							char.explore.distanceUpdatedAt = now
 							if ns.NoteDistanceMilestone then
@@ -389,6 +432,32 @@ function ns.CurrentZone()
 	return currentZone
 end
 
+-- State that must survive a logout because the activity itself does: a flight
+-- that was running when the client closed must not count as a new one when the
+-- next login resumes it. Written at PLAYER_LOGOUT, read once at login.
+local TAXI_RESUME_GRACE = 10
+
+function ns.ExploreSnapshotPresence()
+	local onTaxi = false
+	if type(UnitOnTaxi) == "function" then
+		local ok, taxi = pcall(UnitOnTaxi, "player")
+		onTaxi = ok and taxi and true or false
+	end
+	return { onTaxi = onTaxi }
+end
+
+function ns.ExploreRestorePresence(presence)
+	if type(presence) ~= "table" or not presence.onTaxi then
+		return
+	end
+	-- Seeded as active, so the first taxi tick continues the flight instead
+	-- of counting it. If the player lands, the grace lets a late client
+	-- answer settle before the state is dropped.
+	taxiActive = true
+	taxiResumeUntil = Now() + TAXI_RESUME_GRACE
+	ns.Trace("presence: resuming a flight in progress")
+end
+
 ns.UpdateArea = UpdateArea
 ns.OnEncounterEnd = OnEncounterEnd
 ns.ExploreTick = ExploreTick
@@ -399,3 +468,5 @@ ns.explore.OnEncounterEnd = ns.OnEncounterEnd
 ns.explore.ExploreTick = ns.ExploreTick
 ns.explore.CurrentZone = ns.CurrentZone
 ns.explore.ResumeZone = ns.ResumeZone
+ns.explore.SnapshotPresence = ns.ExploreSnapshotPresence
+ns.explore.RestorePresence = ns.ExploreRestorePresence

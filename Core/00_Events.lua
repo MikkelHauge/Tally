@@ -6,7 +6,7 @@
 -- before Core.lua so Core can register its own ADDON_LOADED handler at load.
 local addonName, ns = ...
 
-local OWNER_RANK = { Core = 1, Auction = 2, Kills = 3, Professions = 4 }
+local OWNER_RANK = { Core = 1, Auction = 2, Kills = 3, Professions = 4, Social = 5 }
 
 local frames = {}     -- [event key] = frame
 local eventHandlers = {}   -- [event key] = ordered handler list

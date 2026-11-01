@@ -102,7 +102,7 @@ function ns.Context(how, evidence, opts)
 	local context = {
 		at = tonumber(opts.at) or ns.Now(),
 		how = Validate("how", how, "unknown"),
-		evidence = Validate("evidence", evidence, "unclassified"),
+		evidence = Validate("evidence", evidence, "unknown"),
 		observed = Validate("observed", opts.observed, "live"),
 	}
 	if opts.observedAt then
@@ -149,7 +149,9 @@ function ns.Touch(char, path, at, firstAt)
 		meta.stamps[path] = stamp
 		return stamp
 	end
-	if (stamp.firstAt or at) > at then
+	if not stamp.firstAt then
+		stamp.firstAt = tonumber(firstAt) or at
+	elseif stamp.firstAt > at then
 		stamp.firstAt = at
 	end
 	if not stamp.lastAt or at > stamp.lastAt then

@@ -12,13 +12,13 @@ local ACCENT, ClassColorCode, QualityCode, CreateListCard, AddCardTitleNote,
 local milestoneWidgets = {
 	categorySort = true,
 	collapsed = {},
-	sortMode = "category",
-	showMode = "all",
+	sortMode = "low",
+
 	showHidden = false,
 }
 
-local SORT_MODES = { "newest", "oldest", "category", "alpha" }
-local SHOW_MODES = { "all", "firsts", "counts" }
+local SORT_MODES = { "low", "high" }
+
 
 local function NextMode(list, current)
 	for index = 1, #list do
@@ -30,17 +30,13 @@ local function NextMode(list, current)
 end
 
 local function SortLabel(mode)
-	if mode == "oldest" then return "sort: oldest" end
-	if mode == "category" then return "sort: category" end
-	if mode == "alpha" then return "sort: A-Z" end
-	return "sort: newest"
+	if mode == "high" then
+		return "order: high-low"
+	end
+	return "order: low-high"
 end
 
-local function ShowLabel(mode)
-	if mode == "firsts" then return "show: firsts" end
-	if mode == "counts" then return "show: counts" end
-	return "show: all"
-end
+
 
 local function ZoneText(zone, kind)
 	if not zone or zone == "" then
@@ -399,40 +395,69 @@ end
 
 local function CountItems(items, char, milestones, showHidden)
 	local thresholds = milestones.thresholds or {}
-	local function AddCount(category, label, value, entry)
-		if entry then
+	local function AddCount(category, metric, threshold, label, entry)
+		if type(entry) == "table" then
 			local extra = {}
 			if entry.observed == "login" or entry.observed == "migration" then
 				extra[#extra + 1] = {
-					text = "Number is estimated: Tally first saw this milestone already reached; the date is when it was first seen, not when it was crossed.",
+					text = "Number is estimated: this count was already reached when Tally started; the date is when it was noticed, not when it was crossed.",
 					color = ROW_DETAIL_DIM,
 				}
 			end
+			if entry.at and char.created and entry.at > char.created then
+				local days = (entry.at - char.created) / 86400
+				if days >= 0.5 then
+					extra[#extra + 1] = {
+						text = string.format("Reached %.0f days after the record began", days),
+						color = ROW_DETAIL_DIM,
+					}
+					if entry.value and entry.value > 0 then
+						local average = entry.value / days
+						if string.find(label, "Gold", 1, true) then
+							extra[#extra + 1] = {
+								text = "About "..ns.FormatMoneyBig(math.floor(average + 0.5)).." per day since then",
+								color = ROW_DETAIL_DIM,
+							}
+						else
+							extra[#extra + 1] = {
+								text = "About "..ns.FormatNumber(math.floor(average + 0.5)).." per day since then",
+								color = ROW_DETAIL_DIM,
+							}
+						end
+					end
+				end
+			end
+			local before = #items
 			AddItem(items, category, label, entry.at, NoticeTip(label, entry, extra))
-			items[#items].count = true
+			-- A crossing with no date is not listed; do not decorate the item
+			-- above it as though it had been added.
+			if #items == before then
+				return
+			end
 		elseif showHidden then
-			AddItem(items, category, label.." (not yet)", 0, nil, true)
-			items[#items].count = true
+			AddItem(items, category, label, 0, nil, true)
+		else
+			return
 		end
+		items[#items].count = true
+		items[#items].metric = metric
+		items[#items].threshold = threshold
 	end
-	local function Emit(group, key, labelFn, valueFn)
+
+	-- One category per domain, each with a fixed metric order. The sort
+	-- button only walks the thresholds low-to-high or high-to-low inside that
+	-- order; the label is never used for sorting.
+	local function Emit(category, metric, group, key, labelFn)
 		local bucket = thresholds[group] and thresholds[group][key] or {}
-		local thresholdsFor = ns.milestoneThresholds[group] or {}
-		for _, threshold in ipairs(thresholdsFor) do
-			AddCount("General", labelFn(threshold), valueFn(threshold), bucket[threshold])
+		local ladder = ns.milestoneThresholds[group] or {}
+		for _, threshold in ipairs(ladder) do
+			AddCount(category, metric, threshold, labelFn(threshold), bucket[threshold])
 		end
 	end
-	Emit("quests", "quests", function(t) return "Quests "..ns.FormatNumber(t) end,
-		function(t) return ns.FormatNumber(t) end)
-	Emit("gold", "balance", function(t) return "Gold "..ns.FormatMoneyBig(t) end,
-		function(t) return ns.FormatMoneyBig(t) end)
-	Emit("goldSpent", "gold", function(t) return "Gold spent "..ns.FormatMoneyBig(t) end,
-		function(t) return ns.FormatMoneyBig(t) end)
-	Emit("kills", "kills", function(t) return "Enemies killed "..ns.FormatNumber(t) end,
-		function(t) return ns.FormatNumber(t) end)
-	-- The first death is the Deaths 1 count row, with the zone it happened in.
-	-- There is no separate "First death" row in Combat any more: the event
-	-- belongs with the count it produces.
+
+	Emit("Combat", 1, "kills", "kills", function(t) return "Enemies killed "..ns.FormatNumber(t) end)
+
+	-- Deaths keep their own first-death zone on the one-death row.
 	local deathsBucket = thresholds.deaths and thresholds.deaths.deaths or {}
 	local firstDeath = char.combat and char.combat.deathLog and char.combat.deathLog[1] or nil
 	if not firstDeath and char.combat and (char.combat.deaths or 0) == 1 then
@@ -459,26 +484,63 @@ local function CountItems(items, char, milestones, showHidden)
 				}
 			end
 		end
-		AddCount("General", label, ns.FormatNumber(threshold), record)
+		AddCount("Combat", 2, threshold, label, record)
 	end
-	Emit("dungeons", "dungeons", function(t) return "Dungeon runs "..ns.FormatNumber(t) end,
-		function(t) return ns.FormatNumber(t) end)
-	Emit("bosses", "bosses", function(t) return "Bosses killed "..ns.FormatNumber(t) end,
-		function(t) return ns.FormatNumber(t) end)
-	Emit("loot", "loot", function(t) return "Items looted "..ns.FormatNumber(t) end,
-		function(t) return ns.FormatNumber(t) end)
-	Emit("crafted", "crafted", function(t) return "Items crafted "..ns.FormatNumber(t) end,
-		function(t) return ns.FormatNumber(t) end)
-	Emit("distance", "distance", function(t) return "Distance "..ns.FormatNumber(t).." km" end,
-		function(t) return tostring(t) end)
-	for profession, byThreshold in pairs(thresholds.recipes or {}) do
-		for _, threshold in ipairs(ns.milestoneThresholds.recipes) do
-			AddCount("General", profession.." "..threshold.." recipes", tostring(threshold), byThreshold[threshold])
+
+	Emit("Combat", 3, "dungeons", "dungeons", function(t) return "Dungeon runs "..ns.FormatNumber(t) end)
+	Emit("Combat", 4, "bosses", "bosses", function(t) return "Bosses killed "..ns.FormatNumber(t) end)
+
+	Emit("Exploration", 1, "quests", "quests", function(t) return "Quests completed "..ns.FormatNumber(t) end)
+	Emit("Exploration", 2, "distance", "distance", function(t) return "Distance "..ns.FormatNumber(t).." km" end)
+	Emit("Exploration", 3, "distanceOnFoot", "distanceOnFoot", function(t) return "Distance on foot "..ns.FormatNumber(t).." km" end)
+	Emit("Exploration", 4, "distanceMounted", "distanceMounted", function(t) return "Distance mounted "..ns.FormatNumber(t).." km" end)
+
+	Emit("Time", 1, "afk", "afk", function(t) return "AFK time "..math.floor(t / 3600).."h" end)
+	Emit("Time", 2, "flightTime", "flightTime", function(t) return "Flight time "..math.floor(t / 3600).."h" end)
+
+	Emit("Loot", 1, "loot", "loot", function(t) return "Items looted "..ns.FormatNumber(t) end)
+	-- Poor through legendary only: artifact and heirloom are retail-only
+	-- qualities this client does not use.
+	local qualityNames = { [0] = "Poor", [1] = "Common", [2] = "Uncommon", [3] = "Rare",
+		[4] = "Epic", [5] = "Legendary" }
+	local qualityThresholds = thresholds.lootQuality or {}
+	for quality = 0, 5 do
+		local bucket = qualityThresholds[tostring(quality)] or {}
+		local name = qualityNames[quality]
+		for _, threshold in ipairs(ns.milestoneThresholds.lootQuality or {}) do
+			AddCount("Loot", 2 + quality, threshold, name.." items "..ns.FormatNumber(threshold), bucket[threshold])
 		end
 	end
-	for profession, byThreshold in pairs(thresholds.professionSkills or {}) do
-		for _, threshold in ipairs(ns.milestoneThresholds.professionSkills) do
-			AddCount("General", profession.." skill "..threshold, tostring(threshold), byThreshold[threshold])
+
+	Emit("Economy", 1, "gold", "balance", function(t) return "Gold held "..ns.FormatMoneyBig(t) end)
+	Emit("Economy", 2, "goldSpent", "gold", function(t) return "Gold spent "..ns.FormatMoneyBig(t) end)
+	Emit("Economy", 3, "crafted", "crafted", function(t) return "Items crafted "..ns.FormatNumber(t) end)
+
+	-- Professions, alphabetically, with the skill ladder before the recipe
+	-- ladder for each one.
+	local professionNames, seenProfession = {}, {}
+	local function AddProfession(name)
+		if name and not seenProfession[name] then
+			seenProfession[name] = true
+			professionNames[#professionNames + 1] = name
+		end
+	end
+	for profession in pairs(thresholds.recipes or {}) do
+		AddProfession(profession)
+	end
+	for profession in pairs(thresholds.professionSkills or {}) do
+		AddProfession(profession)
+	end
+	table.sort(professionNames)
+	for index = 1, #professionNames do
+		local profession = professionNames[index]
+		local skills = (thresholds.professionSkills or {})[profession] or {}
+		for _, threshold in ipairs(ns.milestoneThresholds.professionSkills or {}) do
+			AddCount("Professions", index, threshold, profession.." skill "..threshold, skills[threshold])
+		end
+		local recipes = (thresholds.recipes or {})[profession] or {}
+		for _, threshold in ipairs(ns.milestoneThresholds.recipes or {}) do
+			AddCount("Professions", index, 10000 + threshold, profession.." "..threshold.." recipes", recipes[threshold])
 		end
 	end
 end
@@ -495,80 +557,42 @@ local function RefreshMilestones()
 	end
 	local milestones = char.milestones or {}
 	local items = {}
-	LevelItems(items, char)
-	CombatItems(items, milestones)
-	ExplorationItems(items, char, milestones)
-	EconomyItems(items, char, milestones)
 	CountItems(items, char, milestones, milestoneWidgets.showHidden)
 
-	local show = milestoneWidgets.showMode
-	if show == "firsts" then
-		local kept = {}
-		for index = 1, #items do
-			if not items[index].count then
-				kept[#kept + 1] = items[index]
-			end
-		end
-		items = kept
-	elseif show == "counts" then
-		local kept = {}
-		for index = 1, #items do
-			if items[index].count then
-				kept[#kept + 1] = items[index]
-			end
-		end
-		items = kept
-	end
-
 	local mode = milestoneWidgets.sortMode
+	-- Fixed category and metric order; only the thresholds inside a metric
+	-- walk low-to-high or high-to-low. Labels are never sorted: "1.000" would
+	-- land next to "10" otherwise.
+	local CATEGORY_ORDER = { Combat = 1, Exploration = 2, Time = 3, Loot = 4, Economy = 5, Professions = 6 }
 	table.sort(items, function(a, b)
 		if (a.hidden and true or false) ~= (b.hidden and true or false) then
 			return not a.hidden
 		end
-		if mode == "newest" then
-			if a.at ~= b.at then return a.at > b.at end
-		elseif mode == "oldest" then
-			if a.at ~= b.at then return a.at < b.at end
-		elseif mode == "category" then
-			local ar = a.category == "General" and 0 or 1
-			local br = b.category == "General" and 0 or 1
-			if ar ~= br then return ar < br end
-			if a.category ~= b.category then return a.category < b.category end
-			-- Inside General, keep the one-time firsts before the counts, then
-			-- show each section newest first.
-			if a.category == "General" then
-				local ac = a.count and 1 or 0
-				local bc = b.count and 1 or 0
-				if ac ~= bc then return ac < bc end
+		if a.category ~= b.category then
+			local ao = CATEGORY_ORDER[a.category] or 99
+			local bo = CATEGORY_ORDER[b.category] or 99
+			if ao ~= bo then
+				return ao < bo
 			end
-			if a.at ~= b.at then return a.at > b.at end
-		else
-			if a.label ~= b.label then return a.label < b.label end
+			return a.category < b.category
+		end
+		if (a.metric or 0) ~= (b.metric or 0) then
+			return (a.metric or 0) < (b.metric or 0)
+		end
+		if (a.threshold or 0) ~= (b.threshold or 0) then
+			if mode == "high" then
+				return (a.threshold or 0) > (b.threshold or 0)
+			end
+			return (a.threshold or 0) < (b.threshold or 0)
 		end
 		return a.label < b.label
 	end)
 
 	local lines = {}
-	-- General holds firsts and counts; show the two groups with their own
-	-- subheadings when both are present, without making them categories.
-	local generalFirsts, generalCounts = false, false
-	if mode == "category" then
-		for index = 1, #items do
-			if items[index].category == "General" then
-				if items[index].count then
-					generalCounts = true
-				else
-					generalFirsts = true
-				end
-			end
-		end
-	end
-	local splitGeneral = generalFirsts and generalCounts
-	local generalSection
 	local category
 	for index = 1, #items do
 		local item = items[index]
-		if mode == "category" and item.category ~= category then
+		if item.category ~= category then
 			category = item.category
 			local headerCategory = category
 			local count = 0
@@ -593,21 +617,12 @@ local function RefreshMilestones()
 				},
 			}
 		end
-		if mode == "category" and item.category == "General" and splitGeneral
-			and not milestoneWidgets.collapsed[item.category] then
-			local section = item.count and "counts" or "firsts"
-			if generalSection ~= section then
-				generalSection = section
-				lines[#lines + 1] = {
-					left = "   "..(section == "firsts" and "Firsts" or "Counts"),
-					leftColor = CATEGORY_HEAD_COLOR,
-				}
-			end
-		end
-		if mode ~= "category" or not milestoneWidgets.collapsed[item.category] then
-			local right = item.at and item.at > 0 and ns.FormatDateTime(item.at) or "not yet"
+
+		if not milestoneWidgets.collapsed[item.category] then
+			local right = item.hidden and "Not reached"
+				or (item.at and item.at > 0 and ns.FormatDateTime(item.at) or "Not reached")
 			lines[#lines + 1] = {
-				left = (mode == "category" and "   " or "")..item.label,
+				left = "   "..item.label,
 				right = right,
 				tip = item.tip,
 			}
@@ -620,9 +635,7 @@ local function RefreshMilestones()
 	if milestoneWidgets.sortButton then
 		SetCornerLabel(milestoneWidgets.sortButton, SortLabel(mode))
 	end
-	if milestoneWidgets.showButton then
-		SetCornerLabel(milestoneWidgets.showButton, ShowLabel(show))
-	end
+
 	if FillScrollingLines(card, lines, milestoneWidgets, "milestoneOffset", "Milestones", 54) == 0 then
 		ShowCardText(card, "No milestones recorded yet.")
 	end
@@ -635,7 +648,7 @@ local function BuildMilestonesPage(page)
 
 	milestoneWidgets.card = CreateListCard(page, 0, -20, 730, 414, "Milestones")
 	AddCardTitleNote(milestoneWidgets.card, "Milestones",
-		"One-time events and general counts for this character. In category order, click a category to collapse or expand it. Hover any row for when, where, how and whether it was seen live or at login. Item names carry their item tooltip.")
+		"Counts for this character. In category order, click a category to collapse or expand it. Hover a row for when it was reached, how long the record had been running and the average per day.")
 	AddCardScrollbar(milestoneWidgets.card, milestoneWidgets, "milestoneOffset", RefreshMilestones)
 	MakeCardScrollable(milestoneWidgets.card, milestoneWidgets, "milestoneOffset", RefreshMilestones)
 	milestoneWidgets.card:SetScript("OnUpdate", function()
@@ -659,30 +672,10 @@ local function BuildMilestonesPage(page)
 	sortButton:SetScript("OnEnter", function(self)
 		GameTooltip:SetOwner(self, "ANCHOR_BOTTOMRIGHT")
 		GameTooltip:AddLine("Milestone order", ACCENT[1], ACCENT[2], ACCENT[3])
-		GameTooltip:AddLine("Newest first, oldest first, grouped by category, or alphabetical.", 1, 1, 1, true)
+		GameTooltip:AddLine("Milestones are grouped by category. Click to walk the thresholds inside each one from low to high or high to low.", 1, 1, 1, true)
 		GameTooltip:Show()
 	end)
 	sortButton:SetScript("OnLeave", function()
-		GameTooltip:Hide()
-	end)
-
-	local showButton = CreateCornerButton(milestoneWidgets.card)
-	milestoneWidgets.showButton = showButton
-	SetCornerLabel(showButton, ShowLabel(milestoneWidgets.showMode))
-	showButton:ClearAllPoints()
-	showButton:SetPoint("RIGHT", sortButton, "LEFT", -6, 0)
-	showButton:SetScript("OnClick", function()
-		milestoneWidgets.showMode = NextMode(SHOW_MODES, milestoneWidgets.showMode)
-		milestoneWidgets.milestoneOffset = 0
-		RefreshMilestones()
-	end)
-	showButton:SetScript("OnEnter", function(self)
-		GameTooltip:SetOwner(self, "ANCHOR_BOTTOMRIGHT")
-		GameTooltip:AddLine("Which milestones", ACCENT[1], ACCENT[2], ACCENT[3])
-		GameTooltip:AddLine("All, firsts only, or counts only.", 1, 1, 1, true)
-		GameTooltip:Show()
-	end)
-	showButton:SetScript("OnLeave", function()
 		GameTooltip:Hide()
 	end)
 
@@ -690,7 +683,7 @@ local function BuildMilestonesPage(page)
 	milestoneWidgets.hiddenButton = hiddenButton
 	SetCornerLabel(hiddenButton, "hidden: off")
 	hiddenButton:ClearAllPoints()
-	hiddenButton:SetPoint("RIGHT", showButton, "LEFT", -6, 0)
+	hiddenButton:SetPoint("RIGHT", sortButton, "LEFT", -6, 0)
 	hiddenButton:SetScript("OnClick", function()
 		milestoneWidgets.showHidden = not milestoneWidgets.showHidden
 		SetCornerLabel(hiddenButton, milestoneWidgets.showHidden and "hidden: on" or "hidden: off")

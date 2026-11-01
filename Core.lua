@@ -23,7 +23,7 @@ local addonName, ns = ...
 
 -- Build string reported by "/tally debug" and the trace block. Set by the
 -- maintainer; no logic reads it.
-ns.BUILD = "2026-10-31ay (Milestone labels use plain ASCII hyphens instead of the middle-dot separator, whose double-encoded form showed as an A-like glyph on some clients.)"
+ns.BUILD = "20261101 (Version follows the release date; Forever only.)"
 
 -- In-memory only: key of the character the window and the printed reports
 -- describe when it differs from the character being played; nil when none.
@@ -414,11 +414,17 @@ end
 ns.FormatDate = FormatDate
 
 local function FormatDateTime(timestamp)
+	if not timestamp or timestamp <= 0 then
+		return "-"
+	end
 	return FormatDate(timestamp)..", "..date("%H:%M", timestamp)
 end
 ns.FormatDateTime = FormatDateTime
 
 local function FormatClock(timestamp)
+	if not timestamp or timestamp <= 0 then
+		return "-"
+	end
 	return date("%H:%M", timestamp)
 end
 ns.FormatClock = FormatClock
@@ -802,6 +808,70 @@ local function HighestLevel(char)
 	return peak
 end
 
+-- A record can predate any subtree a later view indexes. Fill the shape once
+-- for the live character at login and for every stored record at load, so no
+-- view has to guess whether the save came from a version that created them.
+local function EnsureCharShape(char)
+	if type(char) ~= "table" then
+		return
+	end
+	if type(char.meta) ~= "table" then
+		char.meta = {}
+	end
+	if type(char.meta.stamps) ~= "table" then
+		char.meta.stamps = {}
+	end
+	if type(char.gold) ~= "table" then
+		char.gold = {}
+	end
+	local goldStore = char.gold
+	if type(goldStore.income) ~= "table" then goldStore.income = {} end
+	if type(goldStore.expenses) ~= "table" then goldStore.expenses = {} end
+	if type(goldStore.daily) ~= "table" then goldStore.daily = {} end
+	if type(goldStore.tx) ~= "table" then goldStore.tx = {} end
+	if type(goldStore.unclassified) ~= "table" then goldStore.unclassified = {} end
+	goldStore.unclassified.count = tonumber(goldStore.unclassified.count) or 0
+	goldStore.unclassified.net = tonumber(goldStore.unclassified.net) or 0
+	if type(char.loot) ~= "table" then
+		char.loot = {}
+	end
+	char.loot.items = tonumber(char.loot.items) or 0
+	char.loot.value = tonumber(char.loot.value) or 0
+	if type(char.loot.quality) ~= "table" then char.loot.quality = {} end
+	if type(char.loot.best) ~= "table" then char.loot.best = {} end
+	if type(char.loot.itemCounts) ~= "table" then char.loot.itemCounts = {} end
+	if type(char.explore) ~= "table" then
+		char.explore = {}
+	end
+	if type(char.explore.zones) ~= "table" then char.explore.zones = {} end
+	if type(char.explore.dungeons) ~= "table" then char.explore.dungeons = {} end
+	if type(char.explore.recentFirsts) ~= "table" then char.explore.recentFirsts = {} end
+	char.explore.distance = tonumber(char.explore.distance) or 0
+	if type(char.played) ~= "table" then
+		char.played = {}
+	end
+	if type(char.levels) ~= "table" then
+		char.levels = {}
+	end
+	if type(char.levels.history) ~= "table" then
+		char.levels.history = {}
+	end
+	if type(char.sessions) ~= "table" then
+		char.sessions = {}
+	end
+	if type(char.sessions.history) ~= "table" then
+		char.sessions.history = {}
+	end
+	if type(char.combat) ~= "table" then
+		char.combat = {}
+	end
+	char.quests = tonumber(char.quests) or 0
+	char.tracked = tonumber(char.tracked) or 0
+	char.alive = tonumber(char.alive) or 0
+	char.afk = tonumber(char.afk) or 0
+end
+ns.EnsureCharShape = EnsureCharShape
+
 local function InitializeCharacter()
 	ns.loginAt = Now()
 	ns.lastQuestTurnInAt = nil
@@ -861,6 +931,24 @@ local function InitializeCharacter()
 			end
 		end
 	end
+	-- The same character under a new name (a rename or a realm transfer)
+	-- keeps one record: the stored GUID is exact, so move the old one rather
+	-- than starting a second and counting its lifetime twice in totals.
+	if guid and ns.db.chars then
+		for candidateKey, candidate in pairs(ns.db.chars) do
+			if candidateKey ~= key and candidate.guid == guid then
+				ns.db.chars[key] = candidate
+				ns.db.chars[candidateKey] = nil
+				local selection = ns.db.settings and ns.db.settings.totalSelect
+				if type(selection) == "table" and selection[candidateKey] ~= nil then
+					selection[key] = selection[candidateKey]
+					selection[candidateKey] = nil
+				end
+				ns.Trace("character identity: record moved from "..candidateKey.." to "..key)
+				break
+			end
+		end
+	end
 	ns.charKey = key
 	ns.playerName = name
 	-- A login always starts on the character being played, not the one
@@ -878,6 +966,7 @@ local function InitializeCharacter()
 	if type(char.meta.stamps) ~= "table" then
 		char.meta.stamps = {}
 	end
+	EnsureCharShape(char)
 	char.name = name
 	char.realm = realm
 	if guid then
@@ -913,7 +1002,9 @@ local function InitializeCharacter()
 	if not char.xp then
 		char.xp = { total = 0, seconds = 0, byLevel = {} }
 	end
-	if not char.xp.byLevel then
+	char.xp.total = tonumber(char.xp.total) or 0
+	char.xp.seconds = tonumber(char.xp.seconds) or 0
+	if type(char.xp.byLevel) ~= "table" then
 		char.xp.byLevel = {}
 	end
 	char.xp.last = nil
@@ -925,17 +1016,17 @@ local function InitializeCharacter()
 	-- events, available on every client even where the combat log is not.
 	char.combat.fights = char.combat.fights or 0
 	char.combat.combatSeconds = char.combat.combatSeconds or 0
+	char.combat.deaths = char.combat.deaths or 0
 	char.combat.killTypes = char.combat.killTypes or {}
 	char.combat.killInfo = char.combat.killInfo or {}
 	char.combat.killsByZone = char.combat.killsByZone or {}
+	if type(char.combat.deathsByZone) ~= "table" then
+		char.combat.deathsByZone = {}
+	end
 	char.combat.killSessions = char.combat.killSessions or 0
 	char.combat.killingFights = char.combat.killingFights or 0
 	char.combat.bestFight = char.combat.bestFight or 0
 	char.combat.best10 = char.combat.best10 or 0
-	char.combat.currentFightKills = 0
-	char.combat.currentFightLastAt = nil
-	char.combat.currentFightZone = nil
-	char.combat.inFight = false
 	char.combat.killsAvailable = ns.killSource ~= nil
 	char.combat.killSource = ns.killSource
 	-- The averages are measured only from the point kill counting began: the
@@ -945,12 +1036,20 @@ local function InitializeCharacter()
 		char.combat.killBaseCombat = char.combat.combatSeconds
 		char.combat.killBaseTracked = char.tracked or 0
 	end
+	local wasInFight = char.combat.inFight and true or false
+	char.combat.currentFightKills = 0
+	char.combat.currentFightLastAt = nil
+	char.combat.currentFightZone = nil
+	char.combat.inFight = false
 	if UnitAffectingCombat and UnitAffectingCombat("player") and ns.Tracks("combat") then
-		-- Logged in or reloaded mid-fight: count it, since the
-		-- entering-combat event does not fire for this fight.
-		char.combat.fights = char.combat.fights + 1
+		-- The entering-combat event does not fire for a fight already running
+		-- at login or after a /reload. Count it only when the saved state did
+		-- not already have this fight open, so a reload does not add a second
+		-- fight for the same pull.
+		if not wasInFight then
+			char.combat.fights = char.combat.fights + 1
+		end
 		char.combat.inFight = true
-		char.combat.currentFightKills = 0
 	end
 	return char
 end
@@ -967,6 +1066,10 @@ local questPending, questAt = false, 0
 -- where the game sends it, otherwise QUEST_FINISHED after a dialog opened.
 -- The boxes count, they do not list quests, so no quest name is read or kept.
 local questXpUntil = 0
+-- Experience lines that arrived just before a turn-in event opened the
+-- window. The client can send the XP line and the turn-in event in either
+-- order, so a small buffer lets the line that arrived first still be booked.
+local recentXpGains = {}
 local playedRequestAt = 0         -- when Tally last asked for /played itself
 local forbiddenSeen = {}          -- [function name] = true, reported once
 local beginPlayDone = false      -- start-of-play work, once per load
@@ -1013,8 +1116,42 @@ end
 -- word on where experience came from is the XP-gain line, and it names no
 -- source, so anything inside the window after QUEST_FINISHED is booked to that
 -- quest and everything else is ignored: Tally never guesses at the rest.
+local function AddQuestXp(amount, why)
+	local char = ns.GetChar()
+	if not char then
+		return
+	end
+	char.questXp = (char.questXp or 0) + amount
+	ns.Trace("quest xp: +"..amount.." "..why)
+	if ns.OnDataTick then
+		ns.OnDataTick()
+	end
+end
+
+-- The client can hand the XP line over a moment before the turn-in event that
+-- opens the window. A line held for a couple of seconds is booked when the
+-- window opens; the lookback stays short so a mob killed just before the
+-- turn-in is not credited to the quest.
+local function BookRecentQuestXp()
+	local now = Now()
+	local lookback = math.min(2, TUNING.questXpWindow)
+	local kept, booked = {}, 0
+	for index = 1, #recentXpGains do
+		local gain = recentXpGains[index]
+		if now - gain.at <= lookback then
+			booked = booked + gain.amount
+		else
+			kept[#kept + 1] = gain
+		end
+	end
+	recentXpGains = kept
+	if booked > 0 then
+		AddQuestXp(booked, "from a line that arrived just before the turn-in")
+	end
+end
+
 local function OnXpMessage(text)
-	if not text or Now() > questXpUntil or not ns.Tracks("explore") then
+	if not text or not ns.Tracks("explore") then
 		return
 	end
 	-- Any thousands separator the client uses is dropped; only the digits are
@@ -1025,14 +1162,19 @@ local function OnXpMessage(text)
 	end
 	local digits = string.gsub(number, "%D", "")
 	local amount = tonumber(digits)
-	local char = ns.GetChar()
-	if not amount or amount <= 0 or not char then
+	if not amount or amount <= 0 then
 		return
 	end
-	char.questXp = (char.questXp or 0) + amount
-	ns.Trace("quest xp: +"..amount.." within "..TUNING.questXpWindow.."s of a turn-in")
-	if ns.OnDataTick then
-		ns.OnDataTick()
+	if Now() <= questXpUntil then
+		AddQuestXp(amount, "within "..TUNING.questXpWindow.."s of a turn-in")
+		return
+	end
+	-- Outside the window: hold it briefly in case the turn-in event is the
+	-- next thing to arrive.
+	recentXpGains[#recentXpGains + 1] = { at = Now(), amount = amount }
+	local lookback = math.min(2, TUNING.questXpWindow)
+	while #recentXpGains > 0 and Now() - recentXpGains[1].at > lookback do
+		table.remove(recentXpGains, 1)
 	end
 end
 
@@ -1254,25 +1396,36 @@ local function OnCombatLogEvent(...)
 	local timestamp, subevent, hideCaster, sourceGUID, sourceName, sourceFlags, sourceRaidFlags, destGUID, destName
 	if select("#", ...) >= 2 then
 		timestamp, subevent, hideCaster, sourceGUID, sourceName, sourceFlags, sourceRaidFlags, destGUID, destName = ...
-	elseif C_CombatLogSecure and C_CombatLogSecure.GetCurrentEventInfo then
-		local ok, a, b, c, d, e, f, g, h, i = pcall(C_CombatLogSecure.GetCurrentEventInfo)
-		if not ok then
-			char.combat.logAvailable = false
-			if ns.db.settings.combatLogRead then
-				-- The client refused the read and showed its "blocked"
-				-- dialog. Disable kill tracking rather than retry on
-				-- every nearby death.
-				ns.db.settings.combatLogRead = false
-				if ns.ApplyCombatLogSetting then
-					ns.ApplyCombatLogSetting("The client refused the combat-log read - kill tracking is off again (leave it off in this game).")
+	else
+		-- Clients differ in how the tuple is read when it is not passed to
+		-- the handler. Try each reader the accessor knows, in the same order.
+		local readers = {
+			C_CombatLogSecure and C_CombatLogSecure.GetCurrentEventInfo,
+			C_CombatLog and C_CombatLog.GetCurrentEventInfo,
+			CombatLogGetCurrentEventInfo,
+		}
+		local refused = false
+		for index = 1, 3 do
+			local reader = readers[index]
+			if type(reader) == "function" then
+				local ok, a, b, c, d, e, f, g, h, i = pcall(reader)
+				if ok and type(b) == "string" then
+					timestamp, subevent, hideCaster, sourceGUID, sourceName, sourceFlags, sourceRaidFlags, destGUID, destName = a, b, c, d, e, f, g, h, i
+					break
 				end
+				refused = true
+			end
+		end
+		if not subevent then
+			char.combat.logAvailable = false
+			if refused and ns.db.settings.combatLogRead and ns.ApplyCombatLogSetting then
+				-- A reader exists but the client refused it: stop asking
+				-- rather than retry on every nearby death.
+				ns.db.settings.combatLogRead = false
+				ns.ApplyCombatLogSetting("The client refused the combat-log read - kill tracking is off again (leave it off in this game).")
 			end
 			return
 		end
-		timestamp, subevent, hideCaster, sourceGUID, sourceName, sourceFlags, sourceRaidFlags, destGUID, destName = a, b, c, d, e, f, g, h, i
-	else
-		char.combat.logAvailable = false
-		return
 	end
 	if type(subevent) ~= "string" then
 		char.combat.logAvailable = false
@@ -1674,7 +1827,9 @@ function StartSession(now)
 		lastSeenAt = now,
 		seconds = 0,
 		alive = 0,
-		startZone = ns.CurrentZone and ns.CurrentZone() or nil,
+		startZone = (ns.CurrentZone and ns.CurrentZone())
+			or (type(GetRealZoneText) == "function" and GetRealZoneText())
+			or nil,
 		startLevel = UnitLevel and UnitLevel("player") or nil,
 		endedObserved = false,
 		durationKnown = false,
@@ -1764,6 +1919,7 @@ local function FinalizeSession(stopAt, endedReason, endedObserved)
 		endLevel = UnitLevel and UnitLevel("player") or nil,
 		seconds = session.seconds,
 		alive = session.alive,
+		afk = session.afk,
 		goldStart = session.goldStart,
 		goldSettled = session.goldSettled,
 		goldEnd = char.gold.balance,
@@ -1827,8 +1983,6 @@ local function ResumeSession(reloading)
 			-- The same session, interrupted for a moment.
 			sessions.current.last = now
 			sessions.current.lastSeenAt = now
-			sessions.current.startZone = sessions.current.startZone
-			sessions.current.startLevel = sessions.current.startLevel
 		else
 			-- The client closed without a logout (a crash or an unannounced
 			-- login): finish the session at its last tick and mark it
@@ -1861,8 +2015,12 @@ local function ResumeSession(reloading)
 		sessions.current = {
 			start = last.start,
 			last = now,
+			lastSeenAt = now,
 			seconds = last.seconds or 0,
 			alive = last.alive or 0,
+			afk = last.afk or 0,
+			startZone = last.startZone,
+			startLevel = last.startLevel,
 			goldStart = last.goldStart,
 			goldSettled = last.goldSettled,
 			kills = last.kills or 0,
@@ -2166,6 +2324,9 @@ local function OnTickStep()
 		-- the breakdown can name it. It can overlap the alive and dead
 		-- figures: a flagged player is still one or the other.
 		char.afk = (char.afk or 0) + 1
+		if ns.NoteAfkMilestone then
+			ns.NoteAfkMilestone(char.afk)
+		end
 		if ns.Touch then
 			ns.Touch(char, "afk", Now())
 		end
@@ -2178,6 +2339,14 @@ local function OnTickStep()
 	end
 	local now = Now()
 	local dead = UnitIsDeadOrGhost and UnitIsDeadOrGhost("player")
+	-- A flight point puts the player on a mount the client reports as mounted,
+	-- which is not time on their own mount. This was read as an undefined
+	-- global before, so the flight exclusion never applied.
+	local onTaxi = false
+	if type(UnitOnTaxi) == "function" then
+		local ok, taxi = pcall(UnitOnTaxi, "player")
+		onTaxi = ok and taxi and true or false
+	end
 	-- The five switches the settings page owns. Each block below asks before
 	-- it writes, so a paused tab stops moving and nothing else is touched.
 	local playtime = ns.Tracks("playtime")
@@ -2245,14 +2414,16 @@ local function OnTickStep()
 		book.currentAt = Now()
 		book.currentLevel = level
 		local bucket = book.byLevel[level]
-		if not bucket then
+		if type(bucket) ~= "table" then
 			bucket = { gained = 0, seconds = 0 }
 			book.byLevel[level] = bucket
 		end
+		bucket.gained = tonumber(bucket.gained) or 0
+		bucket.seconds = tonumber(bucket.seconds) or 0
 		if book.last and xp >= book.last then
 			local gained = xp - book.last
 			if gained > 0 then
-				book.total = book.total + gained
+				book.total = (tonumber(book.total) or 0) + gained
 				bucket.gained = bucket.gained + gained
 				book.minuteGained = (book.minuteGained or 0) + gained
 				if session then
@@ -2291,7 +2462,7 @@ local function OnTickStep()
 			book.minuteGained = 0
 		end
 		book.last = xp
-		book.seconds = book.seconds + 1
+		book.seconds = (tonumber(book.seconds) or 0) + 1
 		bucket.seconds = bucket.seconds + 1
 	end
 
@@ -2314,6 +2485,12 @@ local function OnTickStep()
 				session.mountedSeconds = (session.mountedSeconds or 0) + 1
 			end
 		end
+	end
+
+	-- Social time: group/solo, leader, group sizes and the members present.
+	-- It is a passive record, like the playtime clock, not a tab switch.
+	if ns.SocialTick then
+		ns.SocialTick(char, now)
 	end
 
 	if economy then
@@ -2404,7 +2581,7 @@ function ns.TotalIncludes(key)
 end
 
 function ns.SetTotalIncluded(key, included)
-	if not (ns.db and ns.db.settings) then
+	if not key or not (ns.db and ns.db.settings) then
 		return
 	end
 	local selection = ns.db.settings.totalSelect
@@ -3098,7 +3275,12 @@ function ns.Records()
 	local bestDayIncome, bestDayExpense, bestFind
 	local mostItems, mostFights, mostDeaths, mostFirsts, mostLooted
 	local mostSessionLevels, mostQuests, mostCrafted, mostCraftedItem
-	local mostMounted
+	local mostMounted, mostQuestGold
+	local mostMailSent, mostMailReceived, mostMessagesSent
+	local mostWhispersReceived, mostDuelsWon, mostDuelsLost
+	local function SocialRecord(current, value)
+		return value and value > 0 and (not current or value > current.count)
+	end
 	local mostZones, mostDungeons, mostDungeonRuns, mostBosses, mostDeathsByChar, fewestDeaths
 	local bestBuyAuction, bestSellAuction, mostSoldUnits, mostBoughtUnits
 	local fastestTo = {}
@@ -3157,6 +3339,38 @@ function ns.Records()
 		local quests = char.quests or 0
 		if quests > 0 and (not mostQuests or quests > mostQuests.count) then
 			mostQuests = { count = quests, name = name, classFile = classFile, key = entry.key }
+		end
+
+		-- Social counters, one lifetime total per character.
+		local social = char.social or {}
+		local socialMail = social.mail or {}
+		local socialChat = social.chat or {}
+		local socialWhispers = social.whispers or {}
+		local socialDuels = social.duels or {}
+		if SocialRecord(mostMailSent, socialMail.sent) then
+			mostMailSent = { count = socialMail.sent, name = name, classFile = classFile, key = entry.key }
+		end
+		if SocialRecord(mostMailReceived, socialMail.received) then
+			mostMailReceived = { count = socialMail.received, name = name, classFile = classFile, key = entry.key }
+		end
+		if SocialRecord(mostMessagesSent, socialChat.sent) then
+			mostMessagesSent = { count = socialChat.sent, name = name, classFile = classFile, key = entry.key }
+		end
+		if SocialRecord(mostWhispersReceived, socialWhispers.received) then
+			mostWhispersReceived = { count = socialWhispers.received, name = name, classFile = classFile, key = entry.key }
+		end
+		if SocialRecord(mostDuelsWon, socialDuels.won) then
+			mostDuelsWon = { count = socialDuels.won, name = name, classFile = classFile, key = entry.key }
+		end
+		if SocialRecord(mostDuelsLost, socialDuels.lost) then
+			mostDuelsLost = { count = socialDuels.lost, name = name, classFile = classFile, key = entry.key }
+		end
+
+		-- Quest reward money, one lifetime total per character: the income
+		-- Tally booked to the quests category.
+		local questGold = (char.gold and char.gold.income and char.gold.income.quest) or 0
+		if questGold > 0 and (not mostQuestGold or questGold > mostQuestGold.value) then
+			mostQuestGold = { value = questGold, name = name, classFile = classFile, key = entry.key }
 		end
 
 		-- Time on a mount, one lifetime total per character. Only characters
@@ -3413,7 +3627,7 @@ function ns.Records()
 	end
 
 	return {
-		fastestTo = fastestTo, bestRate = bestRate, mostLevels = mostLevels, mostQuests = mostQuests,
+		fastestTo = fastestTo, bestRate = bestRate, mostLevels = mostLevels, mostQuests = mostQuests, mostQuestGold = mostQuestGold, mostMailSent = mostMailSent, mostMailReceived = mostMailReceived, mostMessagesSent = mostMessagesSent, mostWhispersReceived = mostWhispersReceived, mostDuelsWon = mostDuelsWon, mostDuelsLost = mostDuelsLost,
 		mostCrafted = mostCrafted, mostCraftedItem = mostCraftedItem, firstLevelUp = firstLevelUp, longestSession = longestSession,
 		mostCraftedByProfession = mostCraftedByProfession,
 		cooldownUses = cooldownUses, cooldownOff = cooldownOff, cooldownShortest = cooldownShortest,
@@ -3586,6 +3800,7 @@ local function HandleSlash(message)
 			handlers = handlers + (events[index].count or 0)
 		end
 		ns.Print("schema: "..tostring(ns.SchemaVersion and ns.SchemaVersion() or 0).." of "..tostring(ns.SCHEMA_VERSION or "?").."; events: "..#events..", handlers: "..handlers)
+		ns.Print("social hooks: send="..tostring(ns.socialSendHooked)..", edit="..tostring(ns.socialEditHooked))
 		if ns.AuctionDebugText then
 			ns.Print(ns.AuctionDebugText())
 		end
@@ -3698,7 +3913,10 @@ end
 
 local function OnAddonLoad()
 	ns.Trace("addon loaded")
-	TallyDB = TallyDB or {}
+	if type(TallyDB) ~= "table" then
+		-- A damaged or foreign value must not be indexed as the database.
+		TallyDB = {}
+	end
 	ns.db = TallyDB
 	ApplyDefaults(ns.db, DEFAULTS)
 	if (ns.db.version or 0) < 1 then
@@ -3707,6 +3925,7 @@ local function OnAddonLoad()
 	ns.RunMigrations(ns.db)
 
 	for _, record in pairs(ns.db.chars or {}) do
+		EnsureCharShape(record)
 		local combat = record.combat
 		if combat and combat.killBaseFights == nil then
 			combat.killBaseFights = combat.fights or 0
@@ -3799,6 +4018,64 @@ local EVENTS = {
 -- Forward declaration: the registration helpers below use the handler, and
 -- the handler itself is defined after them.
 local HandleTallyEvent
+
+-- Some activities outlive the client: a flight in progress, a group still
+-- around. Their "already running" state is written at logout and read once at
+-- login, so resuming them is not mistaken for starting them. Clocks are
+-- included because a crash leaves the previous save in place; a snapshot too
+-- old to be the same activity is dropped rather than trusted.
+local PRESENCE_FLIGHT_MAX = 10 * 60
+local PRESENCE_GROUP_MAX = 60 * 60
+
+local function SavePresence(char)
+	if not char then
+		return
+	end
+	local presence = { at = Now() }
+	if ns.explore and ns.explore.SnapshotPresence then
+		presence.explore = ns.explore.SnapshotPresence()
+	end
+	if ns.social and ns.social.SnapshotPresence then
+		presence.social = ns.social.SnapshotPresence()
+	end
+	char.presence = presence
+	local members = 0
+	if presence.social and type(presence.social.units) == "table" then
+		for _ in pairs(presence.social.units) do
+			members = members + 1
+		end
+	end
+	ns.Trace("presence: saved (on taxi="..tostring(presence.explore and presence.explore.onTaxi)
+		..", group members="..members..")")
+end
+
+local function RestorePresence(char)
+	if not char or type(char.presence) ~= "table" then
+		return
+	end
+	local presence = char.presence
+	-- Consumed on read: a snapshot is for the entry that follows it, never
+	-- for a later one.
+	char.presence = nil
+	local age = Now() - (presence.at or 0)
+	if age < 0 then
+		age = 0
+	end
+	if type(presence.explore) == "table" and ns.explore and ns.explore.RestorePresence then
+		if age <= PRESENCE_FLIGHT_MAX then
+			ns.explore.RestorePresence(presence.explore)
+		else
+			ns.Trace("presence: flight state ignored ("..math.floor(age).."s old)")
+		end
+	end
+	if type(presence.social) == "table" and ns.social and ns.social.RestorePresence then
+		if age <= PRESENCE_GROUP_MAX then
+			ns.social.RestorePresence(presence.social)
+		else
+			ns.Trace("presence: group state ignored ("..math.floor(age).."s old)")
+		end
+	end
+end
 
 -- Registers the event handler's events. COMBAT_LOG_EVENT_UNFILTERED is
 -- registered only when kill tracking is enabled and the client exposes an
@@ -3945,9 +4222,36 @@ HandleTallyEvent = function(event, ...)
 
 	if event == "PLAYER_LOGIN" then
 		ns.Trace("player login")
+		-- A character switched to in the same client session is a new
+		-- character: start-of-play work, the session boundary and the money
+		-- context all belong to the previous one. Resetting here keeps
+		-- addons from carrying that state across the character select.
+		beginPlayDone = false
+		sessionResumed = false
+		worldEntered = false
+		lastPlayedSync = 0
+		playedRetryAt = 0
+		pendingLevelSnapshot = nil
+		questPending = false
+		recentXpGains = {}
+		if ns.ResetMoneyContext then
+			ns.ResetMoneyContext()
+		end
+		if ns.ClearPendingLoot then
+			ns.ClearPendingLoot()
+		end
+		if ns.auras and ns.auras.ResetScanGrace then
+			ns.auras.ResetScanGrace()
+		end
 		local okInit, initError = pcall(InitializeCharacter)
 		if not okInit then
 			ns.Trace("ERROR in InitializeCharacter: "..tostring(initError))
+		end
+		local char = ns.GetChar()
+		if char then
+			-- Before the first tick: what was running when the client last
+			-- closed must resume, not restart.
+			RestorePresence(char)
 		end
 		playerGUID = UnitGUID("player")
 		ns.playerName = UnitName("player") or ns.playerName
@@ -3979,7 +4283,7 @@ HandleTallyEvent = function(event, ...)
 			BeginSession(nil, nil)
 		end
 		if not ns.db.settings.quiet then
-			ns.Print("v"..GetAddonVersion().." loaded - /tally opens your statistics, or click the minimap icon.")
+			ns.Print("Loaded - /tally opens your statistics, or click the minimap icon.")
 		end
 	elseif event == "PLAYER_ENTERING_WORLD" then
 		local isInitialLogin, isReloadingUi = ...
@@ -4000,6 +4304,9 @@ HandleTallyEvent = function(event, ...)
 		ns.db.logoutEvents = (ns.db.logoutEvents or 0) + 1
 		local char = ns.GetChar()
 		if char then
+			-- Written before the client serialises: what is still running at
+			-- this moment is what the next entry should continue.
+			SavePresence(char)
 			if FinalizeSession(Now(), "logout", true) then
 				-- If the next world entry is a /reload, it continues this
 				-- session rather than starting a new one.
@@ -4015,6 +4322,7 @@ HandleTallyEvent = function(event, ...)
 		end
 	elseif event == "PLAYER_MONEY" then
 		if ns.Tracks("economy") then
+			ns.NoteMoneyEvent()
 			ns.PollMoney(worldEntered)
 		end
 	elseif event == "MERCHANT_SHOW" then
@@ -4076,6 +4384,7 @@ HandleTallyEvent = function(event, ...)
 		ns.questTurnedInSeen = true
 		if ns.Tracks("explore") then
 			questXpUntil = Now() + TUNING.questXpWindow
+			BookRecentQuestXp()
 			CountQuest(ns.GetChar(), ...)
 		end
 		questPending = false
@@ -4089,6 +4398,7 @@ HandleTallyEvent = function(event, ...)
 		local dialogOpened = questPending
 		if dialogOpened and ns.Tracks("explore") then
 			questXpUntil = Now() + TUNING.questXpWindow
+			BookRecentQuestXp()
 			if not ns.questTurnedInSeen then
 				CountQuest(ns.GetChar(), nil)
 			end
@@ -4141,7 +4451,7 @@ HandleTallyEvent = function(event, ...)
 		local char = ns.GetChar()
 		if char and ns.Tracks("combat") then
 			local at = Now()
-			char.combat.deaths = char.combat.deaths + 1
+			char.combat.deaths = (char.combat.deaths or 0) + 1
 			char.combat.deathsFirstAt = char.combat.deathsFirstAt or at
 			char.combat.deathsLastAt = at
 			if ns.Touch then
@@ -4151,6 +4461,9 @@ HandleTallyEvent = function(event, ...)
 				ns.NoteDeathMilestone(char.combat.deaths)
 			end
 			local zone = ns.CurrentZone() or "Unknown"
+			if type(char.combat.deathsByZone) ~= "table" then
+				char.combat.deathsByZone = {}
+			end
 			char.combat.deathsByZone[zone] = (char.combat.deathsByZone[zone] or 0) + 1
 			if type(char.combat.deathsByZoneMeta) ~= "table" then
 				char.combat.deathsByZoneMeta = {}

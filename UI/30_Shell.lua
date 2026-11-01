@@ -117,6 +117,11 @@ local function SelectTab(id)
 	for pageId, page in pairs(pages) do
 		page:SetShown(pageId == id)
 	end
+	if id == "economy" and ns.economyWidgets then
+		-- Opening the tab shows the newest money changes, not wherever the
+		-- recent list happened to be scrolled last time.
+		ns.economyWidgets.txScrollOffset = 0
+	end
 	if id == "overview" then
 		RefreshCharacterPage()
 	elseif id == "settings" then
@@ -286,7 +291,7 @@ local function CreateMainFrame()
 	frame:SetToplevel(true)
 	frame:Hide()
 	if frame.TitleText then
-		frame.TitleText:SetText("Tally "..GetAddonVersion())
+		frame.TitleText:SetText("Tally")
 	end
 	-- The stock title band is 18 pixels tall, shorter than the 22 pixel
 	-- icon, so the icon used to hang over the inset and look like it was
@@ -414,8 +419,14 @@ local function CreateMainFrame()
 		return page
 	end
 
-	BuildCharacterPage(NewPage("overview"))
-	BuildSettingsPage(NewPage("settings"))
+	local okCharacter, characterError = pcall(BuildCharacterPage, NewPage("overview"))
+	if not okCharacter then
+		ns.Trace("build: the character page failed and was left empty: "..tostring(characterError))
+	end
+	local okSettings, settingsError = pcall(BuildSettingsPage, NewPage("settings"))
+	if not okSettings then
+		ns.Trace("build: the settings page failed and was left empty: "..tostring(settingsError))
+	end
 
 	-- The character tabs. Each build function registers its own refresh in
 	-- pageRefresh, which SelectTab calls when the tab is opened.

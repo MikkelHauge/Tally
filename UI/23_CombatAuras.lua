@@ -46,7 +46,7 @@ end
 -- ability, a gathering ability, or anything else - is still recorded with the
 -- aura, but is not shown: a name missing from Tally's built-in lists landed in
 -- the wrong group, so the groups are held back until they can be trusted.
-local function FillAuraCard(card, bucket, offsetField, title, earlier, mode)
+local function FillAuraCard(card, bucket, offsetField, title, earlier, mode, label)
 	local names = {}
 	for name in pairs(bucket or {}) do
 		names[#names + 1] = name
@@ -106,7 +106,7 @@ local function FillAuraCard(card, bucket, offsetField, title, earlier, mode)
 		}
 	end
 	if FillScrollingLines(card, lines, combatWidgets, offsetField, title, 30) == 0 then
-		ShowCardText(card, "No "..string.lower(title).." recorded yet - they are counted while they are on the character.")
+		ShowCardText(card, "No "..string.lower(label or title).." recorded yet - they are counted while they are on the character.")
 	end
 end
 
@@ -132,8 +132,10 @@ local function RefreshCombatAuras()
 	local auraCount = ns.CountTable(auras.buffs) + ns.CountTable(auras.debuffs)
 	auraCount = auraCount + ((auras.earlierBuffs and auras.earlierBuffs.names) or 0) + ((auras.earlierDebuffs and auras.earlierDebuffs.names) or 0)
 	SetTile(tiles[4], ns.FormatNumber(auraCount), "distinct buffs and debuffs")
-	FillAuraCard(combatWidgets.buffs, auras.buffs, "buffScrollOffset", "Buffs", auras.earlierBuffs, combatWidgets.buffSort)
-	FillAuraCard(combatWidgets.debuffs, auras.debuffs, "debuffScrollOffset", "Debuffs", auras.earlierDebuffs, combatWidgets.debuffSort)
+	local buffCount = ns.CountTable(auras.buffs) + ((auras.earlierBuffs and auras.earlierBuffs.names) or 0)
+	local debuffCount = ns.CountTable(auras.debuffs) + ((auras.earlierDebuffs and auras.earlierDebuffs.names) or 0)
+	FillAuraCard(combatWidgets.buffs, auras.buffs, "buffScrollOffset", "Buffs "..ns.FormatNumber(buffCount), auras.earlierBuffs, combatWidgets.buffSort, "Buffs")
+	FillAuraCard(combatWidgets.debuffs, auras.debuffs, "debuffScrollOffset", "Debuffs "..ns.FormatNumber(debuffCount), auras.earlierDebuffs, combatWidgets.debuffSort, "Debuffs")
 	if combatWidgets.buffSortButton then
 		SetCornerLabel(combatWidgets.buffSortButton, AuraSortLabel(combatWidgets.buffSort))
 	end
@@ -146,6 +148,10 @@ local function BuildCombatAuras(auras)
 	CreateTileRow(auras, -4, { "Campfire time", "Campfire visits", "Camp benefits", "Auras tracked" }, combatWidgets.aurasTiles, false)
 	combatWidgets.buffs = CreateListCard(auras, 0, -88, 359, 372, "Buffs")
 	combatWidgets.debuffs = CreateListCard(auras, 371, -88, 359, 372, "Debuffs")
+	-- The debuff header mirrors the buff one: right-aligned against its card.
+	combatWidgets.debuffs.title:ClearAllPoints()
+	combatWidgets.debuffs.title:SetPoint("TOPRIGHT", combatWidgets.debuffs, "TOPRIGHT", -12, -8)
+	combatWidgets.debuffs.title:SetJustifyH("RIGHT")
 	AddCardTitleNote(combatWidgets.buffs, "Buffs", BUFFS_NOTE)
 	AddCardTitleNote(combatWidgets.debuffs, "Debuffs", DEBUFFS_NOTE)
 	MakeCardScrollable(combatWidgets.buffs, combatWidgets, "buffScrollOffset", function() ns.RefreshCombat() end)

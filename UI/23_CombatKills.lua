@@ -97,7 +97,7 @@ local function RefreshCombatKills()
 	end
 	SetTile(tiles[3], perSession and KillAverage(perSession) or "-",
 		killingSessions > 0
-			and (ns.FormatNumber(killingSessions)..(killingSessions == 1 and " killing session" or " killing sessions"))
+			and ("average based on "..ns.FormatNumber(killingSessions)..(killingSessions == 1 and " killing session" or " killing sessions"))
 			or "no killing sessions yet")
 	local bestFight = combat.bestFight or 0
 	if bestFight > 0 then
@@ -266,7 +266,7 @@ local function BuildCombatKills(kills)
 	combatWidgets.killSort = "most"
 	combatWidgets.killZoneSort = "most"
 	combatWidgets.killZone = nil
-	CreateTileRow(kills, -4, { "Total kills", "Most killed", "Kills per session", "Best combat" }, combatWidgets.killsTiles, false)
+	CreateTileRow(kills, -4, { "Total kills", "Most killed", "Kills per session", "Most kills in one fight" }, combatWidgets.killsTiles, false)
 	combatWidgets.killsCreature = CreateListCard(kills, 0, -88, 359, 372, "Kills by creature")
 	combatWidgets.killsZone = CreateListCard(kills, 371, -88, 359, 372, "Kills by zone")
 	AddCardTitleNote(combatWidgets.killsCreature, "Kills by creature",

@@ -654,6 +654,7 @@ local function CheckNotifications(now)
 	if not (ns.db and ns.db.settings) then
 		return
 	end
+	now = now or Now()
 	local char = ns.GetChar()
 	if not char then
 		return
@@ -822,7 +823,11 @@ ScanProfessionCooldowns = function()
 	end
 end
 
+local lastProfessionScan = 0
+
 local function ScanCooldownsSafely()
+	local now = Now()
+	lastProfessionScan = now
 	local okItems, itemError = pcall(ScanItemCooldowns)
 	if not okItems then
 		ns.Trace("item cooldowns: "..tostring(itemError))
@@ -832,9 +837,24 @@ local function ScanCooldownsSafely()
 		ns.Trace("profession cooldowns: "..tostring(spellError))
 	end
 end
+
+-- Every spell cooldown change fires this event, including every cast. The
+-- recipe scan walks every stored recipe and is not cheap, so it is rate
+-- limited; BAG_UPDATE_COOLDOWN already covers items.
+local function ScanSpellCooldowns()
+	local now = Now()
+	if now - lastProfessionScan < 2 then
+		return
+	end
+	lastProfessionScan = now
+	local ok, err = pcall(ScanProfessionCooldowns)
+	if not ok then
+		ns.Trace("profession cooldowns: "..tostring(err))
+	end
+end
 ns.On("PLAYER_LOGIN", ScanCooldownsSafely, "Professions")
 ns.On("BAG_UPDATE_COOLDOWN", ScanItemsSafely, "Professions")
-ns.On("SPELL_UPDATE_COOLDOWN", ScanCooldownsSafely, "Professions")
+ns.On("SPELL_UPDATE_COOLDOWN", ScanSpellCooldowns, "Professions")
 ns.On("TRADE_SKILL_SHOW", ScanCooldownsSafely, "Professions")
 ns.On("TRADE_SKILL_LIST_UPDATE", ScanCooldownsSafely, "Professions")
 
