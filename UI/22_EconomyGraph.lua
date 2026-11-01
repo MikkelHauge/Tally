@@ -85,6 +85,68 @@ local function DailyMarker(index)
 	return marker
 end
 
+-- The axis has about 46 pixels. A full "1,234g 56s" never fits, so a tick is
+-- shortened to gold only: 250, 1.2k, 12k, 1.2M. The card is about gold
+-- balances, so the unit is understood from context.
+local function GraphMoneyLabel(copper)
+	local gold = (tonumber(copper) or 0) / 10000
+	if gold >= 1000000 then
+		return string.format("%.1fM", gold / 1000000)
+	elseif gold >= 10000 then
+		return string.format("%.0fk", gold / 1000)
+	elseif gold >= 1000 then
+		return string.format("%.1fk", gold / 1000)
+	end
+	return tostring(math.floor(gold + 0.5))
+end
+
+-- One line for every character ticked, for the combined view. Each day is
+-- the sum of the balances those characters had at the end of it; a day no
+-- selected character has a figure for stays a hole rather than becoming 0.
+local function CombineTracks(tracks, dayCount)	local combined = {
+		name = "All selected",
+		combined = true,
+		color = ACCENT,
+		points = {},
+		daySet = {},
+		income = 0,
+		live = false,
+		seen = 0,
+		char = {},
+	}
+	local hasBalance = false
+	for index = 1, #tracks do
+		local track = tracks[index]
+		if track.balance ~= nil then
+			combined.balance = (combined.balance or 0) + track.balance
+			hasBalance = true
+		end
+		combined.income = combined.income + (track.income or 0)
+		if track.live then
+			combined.live = true
+		end
+		if (track.seen or 0) > combined.seen then
+			combined.seen = track.seen
+		end
+		for day in pairs(track.daySet or {}) do
+			combined.daySet[day] = true
+		end
+		-- The points arrays are sparse: a character has no point before the
+		-- day Tally first watched it, so `#points` is not the window length.
+		-- Walk the whole window explicitly or the sum stops at the first hole.
+		for slot = 1, dayCount do
+			local value = track.points and track.points[slot]
+			if value then
+				combined.points[slot] = (combined.points[slot] or 0) + value
+			end
+		end
+	end
+	if not hasBalance then
+		combined.balance = nil
+	end
+	return combined
+end
+
 local function RefreshEconomyGraph()
 	if not economyWidgets.plot then
 		return
@@ -119,12 +181,20 @@ local function RefreshEconomyGraph()
 			shown[#shown + 1] = candidate
 		end
 	end
+	local combinedMode = ns.db and ns.db.settings and ns.db.settings.graphCombined and true or false
+	local drawn = shown
+	if combinedMode and #shown > 1 then
+		drawn = { CombineTracks(shown, #(data.days or {})) }
+	end
 	economyWidgets.graphShown = shown
 	economyWidgets.graphSelected = shown[1]
 	local function CardLabel()
 		return "Economy graph - last "..(economyWidgets.graphDays or 14).." days"
 	end
 	local function CardNotes()
+		if combinedMode and #shown > 1 then
+			return "One combined end-of-day balance for the "..#shown.." characters ticked in the Total picker, walked back from each last known balance."
+		end
 		if #shown > 0 then
 			return "End-of-day balances for the characters ticked in the Total picker, walked back from each last known balance."
 		end
@@ -152,7 +222,15 @@ local function RefreshEconomyGraph()
 					end
 				end
 			end
-			local text = (#shown == 1 and shown[1].name or (#shown.." characters")).."  "..ns.MoneyColored(balance)
+			local label
+			if combinedMode and #shown > 1 then
+				label = "All selected"
+			elseif #shown == 1 then
+				label = shown[1].name
+			else
+				label = #shown.." characters"
+			end
+			local text = label.."  "..ns.MoneyColored(balance)
 			if dayCount > 0 then
 				text = text.."   |cff8f8f8f·|r   "..ns.MoneyColored(math.floor(income / dayCount + 0.5))
 					.."|cff8f8f8f a day over "..dayCount..(dayCount == 1 and " day|r" or " days|r")
@@ -166,8 +244,11 @@ local function RefreshEconomyGraph()
 	if economyWidgets.graphDaysButton then
 		SetCornerLabel(economyWidgets.graphDaysButton, GraphDaysLabel(economyWidgets.graphDays or 14))
 	end
+	if economyWidgets.graphCombinedButton then
+		SetCornerLabel(economyWidgets.graphCombinedButton, combinedMode and "combined" or "separate")
+	end
 
-	if #shown == 0 then
+	if #drawn == 0 then
 		plot:Hide()
 		if graph.footer then
 			graph.footer:SetText("")
@@ -183,13 +264,22 @@ local function RefreshEconomyGraph()
 	-- so lines are rebuilt only when the data moves. The window's length and
 	-- its day buckets are part of it: changing the days button changes what is
 	-- on the axes without moving a single balance, and that has to redraw.
-	local signature = #shown * 1000003
+	local signature = #drawn * 1000003
+	signature = signature + (combinedMode and 7654321 or 0)
 	signature = signature + (economyWidgets.graphDays or 14) * 611953
 	signature = signature + #(data.days or {}) * 15485863
+	-- The selected characters themselves are part of it: swapping one for
+	-- another with identical totals must still refresh the names and hover.
 	for index = 1, #shown do
+		local key = shown[index].key or shown[index].name or ""
+		for position = 1, #key do
+			signature = signature + string.byte(key, position) * position
+		end
+	end
+	for index = 1, #drawn do
 		local total = 0
-		local points = shown[index].points
-		for position = 1, #points do
+		local points = drawn[index].points
+		for position = 1, #(data.days or {}) do
 			total = total + (points[position] or 0)
 		end
 		signature = signature + (total % 99991) * (index + 1)
@@ -238,8 +328,8 @@ local function RefreshEconomyGraph()
 	-- One shared vertical scale for every line, from zero up to the largest
 	-- drawn value: a higher point is more money throughout.
 	local windowMax = 0
-	for index = 1, #shown do
-		local points = shown[index].points
+	for index = 1, #drawn do
+		local points = drawn[index].points
 		for position = 1, daysShown do
 			local value = points[position]
 			if value and value > windowMax then
@@ -282,11 +372,11 @@ local function RefreshEconomyGraph()
 		local label = graph.gridLabels[index]
 		label:SetPoint("RIGHT", plot, "BOTTOMLEFT", axisW - 8, y)
 		if index == 1 then
-			label:SetText(ns.FormatMoneyShort(gridMax))
+			label:SetText(GraphMoneyLabel(gridMax))
 		elseif index == 3 then
 			label:SetText("0")
 		else
-			label:SetText(ns.FormatMoneyShort(math.floor(gridMax / 2)))
+			label:SetText(GraphMoneyLabel(math.floor(gridMax / 2)))
 		end
 	end
 	graph.baseline:SetPoint("BOTTOMLEFT", plot, "BOTTOMLEFT", axisW, floorY)
@@ -393,6 +483,18 @@ local function RefreshEconomyGraph()
 						GameTooltip:AddLine(track.name.."   not watched yet", 0.55, 0.55, 0.55)
 					end
 				end
+				local total, counted = 0, 0
+				for index = 1, #info.tracks do
+					local value = info.tracks[index].points[info.slot]
+					if value then
+						total = total + value
+						counted = counted + 1
+					end
+				end
+				if counted > 0 then
+					GameTooltip:AddLine(" ")
+					GameTooltip:AddLine("Total   "..ns.MoneyColored(total), 1, 1, 1)
+				end
 				GameTooltip:AddLine(" ")
 				GameTooltip:AddLine("Balance at the end of this day. Hover a point for the exact number.", 0.7, 0.7, 0.7, true)
 				GameTooltip:AddLine("Daily balance per day is the sum of what was collected for that date.", 0.7, 0.7, 0.7, true)
@@ -404,7 +506,7 @@ local function RefreshEconomyGraph()
 			end)
 			graph.dayHits[slot] = hit
 		end
-		hit.info = { title = ns.FormatDate(data.days[slot].stamp), slot = slot, tracks = shown }
+		hit.info = { title = ns.FormatDate(data.days[slot].stamp), slot = slot, tracks = drawn }
 		local left = xs[slot] - stepW / 2
 		local right = xs[slot] + stepW / 2
 		if left < 0 then left = 0 end
@@ -421,8 +523,8 @@ local function RefreshEconomyGraph()
 	-- rather than joining across it.
 	local canRotate = CanRotate(plot, economyWidgets)
 	local segmentIndex, markerIndex = 0, 0
-	for index = 1, #shown do
-		local track = shown[index]
+	for index = 1, #drawn do
+		local track = drawn[index]
 		local color = track.color
 		local previousX, previousY
 		for slot = 1, daysShown do
@@ -467,11 +569,18 @@ local function RefreshEconomyGraph()
 				marker:SetSize(11, 11)
 				marker.tex:SetSize(6, 6)
 				marker.tex:SetColorTexture(color[1], color[2], color[3], 1)
+				local title
+				if track.combined then
+					title = "All selected characters"
+				else
+					title = string.format("%s - %s %s", track.name, track.char.level or 0, track.char.class or "?")
+				end
 				marker.info = {
-					title = string.format("%s - %s %s", track.name, track.char.level or 0, track.char.class or "?"),
+					title = title,
 					text = ns.FormatDate(data.days[slot].stamp).." - "..ns.MoneyColored(value),
 					color = color,
-					note = (slot == track.firstSlot and "The first day Tally watched this character, so this point is that day's end: it holds whatever was already in the purse. " or "")
+					note = (track.combined and "The sum of every ticked character's balance at the end of this day. " or "")
+						..(slot == track.firstSlot and "The first day Tally watched this character, so this point is that day's end: it holds whatever was already in the purse. " or "")
 						..(track.live and "the balance Tally is watching now" or ("last known balance - Tally last saw this character "..ns.FormatDate(track.seen or 0))),
 				}
 				-- The day's own table, for the hover: every ticked character
@@ -509,8 +618,16 @@ local function RefreshEconomyGraph()
 		graph.footer:SetTextColor(0.62, 0.62, 0.62)
 	end
 	local viewer = DisplayChar()
-	local pileText = viewer and (viewer.name or "this character") or "this character"
-	graph.footer:SetText(pileText.."  ·  points are end-of-day balances, walked back from the last known one\nhover a day for the exact balance, or a point for this character's number")
+	local pileText
+	if combinedMode and #shown > 1 then
+		pileText = "All selected characters"
+	else
+		pileText = viewer and (viewer.name or "this character") or "this character"
+	end
+	local footerNote = combinedMode and #shown > 1
+		and "points are the sum of their end-of-day balances, walked back from each last known balance\nhover a day for the exact total, or a point for the line's number"
+		or "points are end-of-day balances, walked back from the last known one\nhover a day for the exact balance, or a point for this character's number"
+	graph.footer:SetText(pileText.."  ·  "..footerNote)
 end
 
 local function BuildEconomyGraph(daily)
@@ -540,6 +657,7 @@ local function BuildEconomyGraph(daily)
 		if #shown == 0 then
 			GameTooltip:AddLine("No balance has been recorded for the ticked characters yet.", 1, 1, 1)
 		else
+			local total, hasBalance = 0, false
 			for index = 1, #shown do
 				local track = shown[index]
 				local color = track.color or CharColor(track.char)
@@ -548,9 +666,17 @@ local function BuildEconomyGraph(daily)
 					GameTooltip:AddLine("No balance recorded yet.", 0.7, 0.7, 0.7, true)
 				elseif track.gap then
 					GameTooltip:AddLine(ns.MoneyColored(track.balance).."|cff9f9f9f - line not drawn (ledger gap)|r", 1, 1, 1)
+					total = total + track.balance
+					hasBalance = true
 				else
 					GameTooltip:AddLine(ns.MoneyColored(track.balance), 1, 1, 1)
+					total = total + track.balance
+					hasBalance = true
 				end
+			end
+			if hasBalance then
+				GameTooltip:AddLine(" ")
+				GameTooltip:AddLine("Total   "..ns.MoneyColored(total), 1, 1, 1)
 			end
 		end
 		GameTooltip:AddLine(" ")
@@ -605,6 +731,38 @@ local function BuildEconomyGraph(daily)
 	charsButton:SetScript("OnLeave", function()
 		GameTooltip:Hide()
 	end)
+
+	-- One line for all ticked characters, or one line each. The label names
+	-- the view currently drawn; the click flips it.
+	local combinedButton = CreateCornerButton(card, -12, -26)
+	combinedButton:ClearAllPoints()
+	combinedButton:SetPoint("RIGHT", charsButton, "LEFT", -6, 0)
+	local function CombinedLabel()
+		local on = ns.db and ns.db.settings and ns.db.settings.graphCombined
+		return on and "combined" or "separate"
+	end
+	SetCornerLabel(combinedButton, CombinedLabel())
+	combinedButton:SetScript("OnClick", function()
+		local settings = ns.db and ns.db.settings
+		if not settings then
+			return
+		end
+		settings.graphCombined = not settings.graphCombined
+		SetCornerLabel(combinedButton, CombinedLabel())
+		economyWidgets.graphSignature = nil
+		ns.Trace("daily graph: "..(settings.graphCombined and "combined" or "separate").." view")
+		ns.RefreshEconomyGraph()
+	end)
+	combinedButton:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_BOTTOMRIGHT")
+		GameTooltip:AddLine("Graph view", ACCENT[1], ACCENT[2], ACCENT[3])
+		GameTooltip:AddLine("combined draws one line: the sum of every ticked character's end-of-day balance. separate draws one line per character. Hover a day for the exact figures either way.", 1, 1, 1, true)
+		GameTooltip:Show()
+	end)
+	combinedButton:SetScript("OnLeave", function()
+		GameTooltip:Hide()
+	end)
+	economyWidgets.graphCombinedButton = combinedButton
 end
 
 ns.BuildEconomyGraph, ns.RefreshEconomyGraph = BuildEconomyGraph, RefreshEconomyGraph

@@ -179,8 +179,8 @@ local RECORD_LABELS = {
 	["xp.bestWindow"] = "Best XP rate",
 	["sessions.longest"] = "Longest session",
 	["loot.bestFind"] = "Best find",
-	["auction.bestSale"] = "Dearest sale",
-	["auction.bestBuy"] = "Dearest purchase",
+	["auction.bestSale"] = "Most valuable sale",
+	["auction.bestBuy"] = "Most expensive purchase",
 }
 
 local function RecordValue(key, value)

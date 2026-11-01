@@ -158,6 +158,22 @@ local function BuildOverviewPage(page)
 	firstsLabel:SetText("Recently explored")
 	firstsLabel:SetTextColor(ACCENT[1], ACCENT[2], ACCENT[3])
 	widgets.visitsLabel = firstsLabel
+	widgets.recentCard = card
+	widgets.sessionsLabel = sessionsLabel
+	widgets.sessionOffset = 0
+
+	-- The left half scrolls its session list the same way the right half
+	-- scrolls the places; the number of rows that fit is worked out from the
+	-- card's real height at refresh time.
+	local sessionArea = CreateFrame("Frame", nil, card)
+	sessionArea:SetPoint("TOPLEFT", card, "TOPLEFT", 8, -18)
+	sessionArea:SetPoint("BOTTOMRIGHT", card, "BOTTOMLEFT", 352, 8)
+	sessionArea:EnableMouse(true)
+	sessionArea:EnableMouseWheel(true)
+	sessionArea:SetScript("OnMouseWheel", function(_, delta)
+		widgets.sessionOffset = (widgets.sessionOffset or 0) + (delta > 0 and -1 or 1)
+		ns.RefreshOverview()
+	end)
 
 	-- The right half walks the recently explored places on the wheel: twelve
 	-- rows fit, and a long list stays readable without a second card.
@@ -196,8 +212,7 @@ local function BuildRecentSessionLines(char)
 		entries[#entries + 1] = { left = "playing now", right = right }
 	end
 	local history = char.sessions.history
-	local wanted = current and 11 or 12
-	for index = #history, math.max(1, #history - wanted + 1), -1 do
+	for index = #history, 1, -1 do
 		local session = history[index]
 		local right = ns.FormatDuration(session.seconds, true)
 		if session.goldStart then
@@ -300,12 +315,36 @@ local function BuildRecentVisitLines(char)
 	return entries
 end
 
-local function FillRecentRows(rows, entries)
+local function FillRecentRows(rows, entries, shown)
+	shown = shown or #rows
 	for index = 1, #rows do
-		local entry = entries and entries[index]
-		rows[index].left:SetText(entry and (entry.left or "") or "")
-		rows[index].right:SetText(entry and (entry.right or "") or "")
+		local row = rows[index]
+		if index <= shown then
+			local entry = entries and entries[index]
+			row.left:SetText(entry and (entry.left or "") or "")
+			row.right:SetText(entry and (entry.right or "") or "")
+			row.left:Show()
+			row.right:Show()
+		else
+			row.left:SetText("")
+			row.right:SetText("")
+			row.left:Hide()
+			row.right:Hide()
+		end
 	end
+end
+
+-- How many recent rows the card can show at its current height. The card is
+-- anchored to the page bottom, so this is read at refresh rather than fixed:
+-- a client whose font is taller gets fewer rows, and nothing is drawn past
+-- the card.
+local function RecentRowCapacity(widgets)
+	local card = widgets.recentCard
+	local height = card and card:GetHeight() or 0
+	if height <= 0 then
+		return 5
+	end
+	return math.max(1, math.floor((height - 22 - 14) / 16))
 end
 
 -- A signed change for the session box, in the game's coin colours: the usual
@@ -572,9 +611,25 @@ local function RefreshOverview()
 	SetTile(widgets.world[3], ns.FormatDistance(explore.distance), "approximate, on foot")
 	SetTile(widgets.world[4], ns.FormatDuration(explore.flightSeconds, true), explore.flights > 0 and (explore.flights.." flights") or "no flights yet")
 
-	FillRecentRows(widgets.sessionRows, BuildRecentSessionLines(char))
+	local capacity = RecentRowCapacity(widgets)
+	local sessionLines = BuildRecentSessionLines(char)
+	local sessionOffset = math.min(math.max(widgets.sessionOffset or 0, 0), math.max(0, #sessionLines - capacity))
+	widgets.sessionOffset = sessionOffset
+	local sessionWindow = {}
+	for index = sessionOffset + 1, math.min(#sessionLines, sessionOffset + capacity) do
+		sessionWindow[#sessionWindow + 1] = sessionLines[index]
+	end
+	FillRecentRows(widgets.sessionRows, sessionWindow, capacity)
+	if widgets.sessionsLabel then
+		if #sessionLines > capacity then
+			widgets.sessionsLabel:SetText("Sessions - "..(sessionOffset + 1).."-"..math.min(#sessionLines, sessionOffset + capacity).." of "..#sessionLines)
+		else
+			widgets.sessionsLabel:SetText("Sessions")
+		end
+	end
+
 	local visitLines = BuildRecentVisitLines(char)
-	local visibleVisits = 12
+	local visibleVisits = capacity
 	local maxOffset = math.max(0, #visitLines - visibleVisits)
 	local offset = math.min(math.max(widgets.visitOffset or 0, 0), maxOffset)
 	widgets.visitOffset = offset
@@ -582,7 +637,7 @@ local function RefreshOverview()
 	for index = offset + 1, math.min(#visitLines, offset + visibleVisits) do
 		visitWindow[#visitWindow + 1] = visitLines[index]
 	end
-	FillRecentRows(widgets.firstRows, visitWindow)
+	FillRecentRows(widgets.firstRows, visitWindow, capacity)
 	if widgets.visitsLabel then
 		if #visitLines > visibleVisits then
 			widgets.visitsLabel:SetText("Recently explored - "..(offset + 1).."-"..math.min(#visitLines, offset + visibleVisits).." of "..#visitLines)

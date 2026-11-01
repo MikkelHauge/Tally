@@ -247,6 +247,122 @@ function ns.SetProfessionCooldown(profession, name, recipeID, readyAt, span, ite
 	end
 end
 
+-- Writes one profession reading into the skill list. The window scans and the
+-- Classic skill-line fallback both use it, because Classic has no
+-- GetProfessions/GetProfessionInfo. Existing first-seen stamps are kept; only
+-- the rank moves.
+local function RecordSkillReading(char, name, rank, maxRank, evidence)
+	if not char or not ns.Tracks("economy") then
+		return false
+	end
+	if type(name) ~= "string" or name == "" then
+		return false
+	end
+	if type(rank) ~= "number" or type(maxRank) ~= "number" or maxRank <= 0 then
+		return false
+	end
+	if rank < 0 or rank > maxRank then
+		return false
+	end
+	local store = EnsureProfessions(char)
+	local at = Now()
+	local found
+	for index = 1, #store.skills do
+		if store.skills[index].name == name then
+			found = store.skills[index]
+			break
+		end
+	end
+	if found then
+		found.lastSeenAt = at
+		if found.rank ~= rank or found.maxRank ~= maxRank then
+			found.rank = rank
+			found.maxRank = maxRank
+			found.lastRankAt = at
+			found.updatedAt = at
+		end
+		found.observed = found.observed or "live"
+		found.evidence = found.evidence or evidence
+	else
+		found = {
+			name = name, rank = rank, maxRank = maxRank, at = at,
+			firstAt = at, lastSeenAt = at, lastRankAt = at, updatedAt = at,
+			observed = "live", evidence = evidence or "trade_skill_window",
+		}
+		store.skills[#store.skills + 1] = found
+	end
+	if not store.learned[name] then
+		local zone, zoneKind
+		if ns.MilestoneContext then
+			zone, zoneKind = ns.MilestoneContext()
+		end
+		store.learned[name] = {
+			name = name,
+			rank = rank,
+			maxRank = maxRank,
+			at = found.firstAt or at,
+			zone = zone,
+			zoneKind = zoneKind,
+			observed = "live",
+			how = "profession_learned",
+			evidence = found.evidence,
+			updatedAt = at,
+		}
+		ns.Trace("profession learned: "..name.." "..rank.."/"..maxRank)
+	end
+	store.at = at
+	store.updatedAt = at
+	return true
+end
+
+-- Classic's skill lines carry the same name/rank/max-rank as the modern
+-- profession list, but they also list weapons and languages. Only names
+-- Tally already learned from a profession window are accepted, so a weapon
+-- skill can never appear as a profession. On clients with GetProfessions this
+-- is never used.
+local function SnapshotSkillLines(char)
+	if not char or type(GetNumSkillLines) ~= "function" or type(GetSkillLineInfo) ~= "function" then
+		return 0
+	end
+	local store = char.professions
+	if type(store) ~= "table" then
+		return 0
+	end
+	local known = {}
+	for index = 1, #store.skills do
+		local skill = store.skills[index]
+		if skill and skill.name then
+			known[skill.name] = true
+		end
+	end
+	for name in pairs(store.recipes or {}) do
+		known[name] = true
+	end
+	for name in pairs(store.crafts or {}) do
+		known[name] = true
+	end
+	for name in pairs(store.learned or {}) do
+		known[name] = true
+	end
+	if next(known) == nil then
+		return 0
+	end
+	local ok, count = pcall(GetNumSkillLines)
+	if not ok or type(count) ~= "number" then
+		return 0
+	end
+	local updated = 0
+	for index = 1, count do
+		local okLine, name, isHeader, _, rank, _, _, maxRank = pcall(GetSkillLineInfo, index)
+		if okLine and name and not isHeader and known[name] then
+			if RecordSkillReading(char, name, rank, maxRank, "skill_line") then
+				updated = updated + 1
+			end
+		end
+	end
+	return updated
+end
+
 -- Reads the client's profession list. A client that refuses records nothing
 -- rather than a guess. Only name and ranks are kept: the recipe count the
 -- client returns does not match what a profession window lists (engineering
@@ -257,8 +373,11 @@ local function SnapshotProfessions(char, observed)
 	end
 	observed = observed or "live"
 	if not (GetProfessions and GetProfessionInfo) then
-		-- Traced rather than silently skipped, so an empty tab has an answer.
-		ns.Trace("professions: this client has no GetProfessions/GetProfessionInfo")
+		-- Classic: the profession list is read from the skill lines instead.
+		-- Only professions already met from a window are updated, so the
+		-- weapon and language lines stay out of the profession cards.
+		local updated = SnapshotSkillLines(char)
+		ns.Trace("professions: no GetProfessions/GetProfessionInfo; skill lines updated "..updated)
 		return
 	end
 	local ok, skills = pcall(function()
@@ -555,11 +674,15 @@ local function CaptureTradeSkillRecipes(char)
 	if not char then
 		return false
 	end
-	local ok, profession = pcall(GetTradeSkillLine)
+	local ok, profession, rank, maxRank = pcall(GetTradeSkillLine)
 	if not ok or not profession or profession == "UNKNOWN" then
 		ns.Trace("recipes: the trade skill window did not name its profession yet ("..tostring(profession)..")")
 		return false
 	end
+	-- The window names the profession and its rank directly, which is how a
+	-- Classic client reports a profession at all. Recorded even for a
+	-- gathering profession, whose list is empty.
+	RecordSkillReading(char, profession, rank, maxRank, "trade_skill_window")
 	if (GetNumTradeSkills() or 0) == 0 then
 		-- The window named its profession and lists nothing: a gathering
 		-- profession, or one still filling. Either way the read is recorded as
@@ -694,9 +817,10 @@ local function CaptureCraftRecipes(char)
 	end
 	local profession = EnchantingName(char)
 	if GetCraftDisplaySkillLine then
-		local ok, named = pcall(GetCraftDisplaySkillLine)
+		local ok, named, rank, maxRank = pcall(GetCraftDisplaySkillLine)
 		if ok and named and named ~= "UNKNOWN" then
 			profession = named
+			RecordSkillReading(char, named, rank, maxRank, "craft_window")
 		end
 	end
 	KeepRecipeList(char, profession, { list = list, items = items })

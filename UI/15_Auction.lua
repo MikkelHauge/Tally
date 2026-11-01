@@ -251,7 +251,7 @@ local function Refresh(store)
 	local totals = report.totals
 	local period = PeriodAt(PeriodIndex(store))
 
-	-- Tile row 1: the figures the day button filters, plus the dearest sale
+	-- Tile row 1: the figures the day button filters, plus the most valuable sale
 	-- the character has ever had (which is not a figure for a range).
 	local returned = {}
 	if totals.expired > 0 then
@@ -436,7 +436,7 @@ local function Refresh(store)
 						math.floor(((row.income or 0) - (row.cut or 0)) / row.units)).." each") or ""), color = GREEN }
 			tipLines[#tipLines + 1] = { text = "Total income "..ns.MoneyColored(row.received or 0), color = GREEN }
 			tipLines[#tipLines + 1] = {
-				text = "Dearest sale "..ns.MoneyColored(row.best or 0)..(row.bestAt and (" on "..ns.FormatDate(row.bestAt)) or ""), color = ROW_DIM }
+				text = "Most valuable sale "..ns.MoneyColored(row.best or 0)..(row.bestAt and (" on "..ns.FormatDate(row.bestAt)) or ""), color = ROW_DIM }
 			if row.bought and row.bought > 0 then
 				tipLines[#tipLines + 1] = {
 					text = "Bought "..ns.FormatNumber(row.bought).." for "..ns.MoneyColored(row.cost or 0)

@@ -277,16 +277,16 @@ local function RefreshTotalRecords()
 		AddRecord("Items and professions", label, value, record)
 	end
 
-	-- The auction house, from the invoices Tally read: the dearest single
+	-- The auction house, from the invoices Tally read: the most expensive single
 	-- purchase and sale, and who has moved the most items each way. A
 	-- character who never bought or sold has no row to win.
-	AddRecord("Auction house", "Dearest purchase",
+	AddRecord("Auction house", "Most expensive purchase",
 		records.bestBuyAuction and ns.MoneyColored(records.bestBuyAuction.value),
 		records.bestBuyAuction,
 		records.bestBuyAuction and (ItemCode(records.bestBuyAuction)
 			..(records.bestBuyAuction.item or "?").."|r"),
 		records.bestBuyAuction and records.bestBuyAuction.at and ns.FormatDate(records.bestBuyAuction.at))
-	AddRecord("Auction house", "Dearest sale",
+	AddRecord("Auction house", "Most valuable sale",
 		records.bestSellAuction and ns.MoneyColored(records.bestSellAuction.value),
 		records.bestSellAuction,
 		records.bestSellAuction and (ItemCode(records.bestSellAuction)

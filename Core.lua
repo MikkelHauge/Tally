@@ -319,20 +319,22 @@ local function CoinIcon(kind, fontHeight)
 end
 
 -- Copper -> a texture string with the little coins, straight from the client
--- when it offers one; plain text otherwise. From ten thousand gold up the
--- gold count is shortened and the copper is left off, so 260,055g 22c reads
--- "260k [gold] 55 [silver]": the short form is never pushed onto a new line.
+-- when it offers one; plain text otherwise. From one thousand gold up the
+-- copper is left off, so 1,234g 56s 78c reads "1,234 [gold] 56 [silver]" and
+-- stays on one line; from ten thousand the gold count is shortened too, so
+-- 260,055g 22c reads "260k [gold] 55 [silver]".
 function ns.MoneyString(copper, fontHeight)
 	copper = math.floor(tonumber(copper) or 0)
 	fontHeight = fontHeight or 14
 	local value = math.abs(copper)
 	local gold = math.floor(value / 10000)
-	if gold >= 10000 then
+	if gold >= 1000 then
+		-- Four digits of gold, the sign and the coin icons no longer leave
+		-- room for copper in a tile. From 1,000g the copper is left off; the
+		-- silver stays while there is any, so the figure stays on one line.
 		local sign = copper < 0 and "-" or ""
-		local text = sign..FormatCompact(gold)..CoinIcon("Gold", fontHeight)
-		-- A shortened gold figure is shown on its own line in a box, so the
-		-- copper is left off: it is what made the line run into the text
-		-- below. Silver stays while there is any.
+		local goldText = gold >= 10000 and FormatCompact(gold) or FormatNumber(gold)
+		local text = sign..goldText..CoinIcon("Gold", fontHeight)
 		local silver = math.floor((value % 10000) / 100)
 		if silver > 0 then
 			text = text.." "..silver..CoinIcon("Silver", fontHeight)
@@ -387,7 +389,7 @@ local function MoneyColored(copper)
 	local gold = math.floor(copper / 10000)
 	local silver = math.floor(copper % 10000 / 100)
 	local cents = copper % 100
-	local abbreviated = gold >= 10000
+	local abbreviated = gold >= 1000
 	local parts = {}
 	if gold > 0 then
 		parts[#parts + 1] = "|cffffd700"..GoldText(gold).."|r"
@@ -473,6 +475,10 @@ local DEFAULTS = {
 		-- unless the owner asks for the stretch the client measured to be
 		-- shared out between them.
 		levelEstimate = false,
+		-- Economy graph: false draws one line per selected character, true
+		-- combines them into one line. The corner button on the graph flips
+		-- it; nothing is stored per character.
+		graphCombined = false,
 		-- Off by default: AFK time counts as played time, so tracked time
 		-- stays close to the server's own /played figure. Ticking this
 		-- counts only time at the keyboard instead.
