@@ -1,4 +1,4 @@
-## Interface: 16001, 120105, 50504, 11509
+## Interface: 16001
 ## Title: Tally
 ## Notes: Character statistics: playtime, gold, combat, loot and exploration - recorded quietly in the background and shown in a clean dashboard.
 ## Author: Mikkel
