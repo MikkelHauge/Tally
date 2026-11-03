@@ -6,7 +6,7 @@
 -- flags are left in place: an older build can still read the same data.
 local addonName, ns = ...
 
-local CURRENT_SCHEMA = 9
+local CURRENT_SCHEMA = 10
 local MIGRATIONS = {}
 
 -- 1: the minimap icon moved from a free position to the minimap's ring.
@@ -622,6 +622,16 @@ MIGRATIONS[9] = function(db)
 				end
 			end
 		end
+	end
+end
+
+-- 10: the login cooldown check now runs fifteen seconds after entering the
+-- world. 20 was the old default, so a save still on it moves to the new one;
+-- any other value was chosen by the player and is left alone.
+MIGRATIONS[10] = function(db)
+	local settings = db.settings and db.settings.professionNotify
+	if type(settings) == "table" and settings.loginDelay == 20 then
+		settings.loginDelay = 15
 	end
 end
 

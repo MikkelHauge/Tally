@@ -134,7 +134,29 @@ local function BuildSettingsPage(page)
 		ns.db.settings.icon.locked = value
 	end, "Stops the button being dragged around the minimap. Unlock it to move it again.")
 
+	local chatHeadingY = y
 	y = AddDividerHeading(left, "Chat", y)
+	-- The notification options cover chat and chimes as well as cooldowns, so
+	-- they sit on the Chat heading where players look for message settings.
+	local notifyButton = CreateFrame("Button", nil, left, "UIPanelButtonTemplate")
+	notifyButton:SetSize(160, 20)
+	notifyButton:SetPoint("TOPRIGHT", left, "TOPRIGHT", -8, chatHeadingY - 2)
+	notifyButton:SetText("Profession notifications")
+	notifyButton:SetScript("OnClick", function()
+		if ns.OpenProfessionNotifyPanel then
+			ns.OpenProfessionNotifyPanel()
+		end
+	end)
+	notifyButton:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		GameTooltip:AddLine("Profession notifications", ACCENT[1], ACCENT[2], ACCENT[3])
+		GameTooltip:AddLine("Cooldown ready alerts, skill-cap messages and trainer reminders, with their chime and character list.", 1, 1, 1, true)
+		GameTooltip:AddLine("Click to open the options.", 0.7, 0.7, 0.7, true)
+		GameTooltip:Show()
+	end)
+	notifyButton:SetScript("OnLeave", function()
+		GameTooltip:Hide()
+	end)
 	y = AddCheckboxRow(left, y, "Print data on level up", function()
 		return ns.db.settings.announceLevelUps
 	end, function(value)

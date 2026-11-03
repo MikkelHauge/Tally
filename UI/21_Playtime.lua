@@ -79,9 +79,10 @@ local function RefreshPlaytime()
 	-- open session from another character is not shown as live.
 	local liveSession = (not viewing) and sessions.current or nil
 	-- The session open now, or the longest finished one, on the left; the
-	-- average of the finished sessions against the right edge.
+	-- average of all sessions - the open one included - against the right.
 	local sessionSub, sessionAvg = SessionTileText(sessions, liveSession)
-	SetTile(playtimeWidgets.tiles[3], ns.FormatNumber(sessions.count), sessionSub, nil, nil, sessionAvg)
+	local sessionCount = ns.SessionTotals(sessions, liveSession)
+	SetTile(playtimeWidgets.tiles[3], ns.FormatNumber(sessionCount), sessionSub, nil, nil, sessionAvg)
 	-- A session that ended without a logout (crash, disconnect or the client
 	-- being killed) has no length to record, so it is counted beside the
 	-- total rather than in it: the card's title carries the count, which
@@ -355,7 +356,7 @@ local function BuildPlaytimePage(page)
 	CreateTileRow(page, -4, { "Lifetime played", "Tracked by Tally", "Sessions", "Alive time" }, playtimeWidgets.tiles, false)
 	playtimeWidgets.sessions = CreateListCard(page, 0, -88, 359, 372, "Recent sessions")
 	AddCardTitleNote(playtimeWidgets.sessions, "Recent sessions",
-		"One row per finished session, newest first, with its length and what the purse did over it. Hover a session for how its time was spent, and note that a session that ended without a logout has no length to record.")
+		"One row per session, newest first, with the session being played now at the top. Hover a session for how its time was spent, and note that a session that ended without a logout has no length to record.")
 	-- Hovering a session shows its own breakdown. The rows are not
 	-- mouse-enabled, so the card tracks the cursor itself; mouse on the card
 	-- would swallow the window drag, so the drag is handed back.

@@ -495,8 +495,10 @@ local DEFAULTS = {
 		-- Some clients refuse addon combat-log reads with a "blocked"
 		-- popup, so the combat log is only read when this is enabled.
 		combatLogRead = false,
-		-- Cooldown notifications. These are account-wide settings; the
+		-- Profession notifications. These are account-wide settings; the
 		-- per-cooldown opt-outs live on each character's profession record.
+		-- professionNotifySelect is the separate character list for
+		-- notifications; it never moves the Total tab's selection.
 		professionNotify = {
 			thisChar = true,
 			allSelected = false,
@@ -509,8 +511,9 @@ local DEFAULTS = {
 			intervalValue = 30,
 			intervalUnit = "minutes",
 			loginNotify = true,
-			loginDelay = 20,
+			loginDelay = 15,
 			near = true,
+			caps = true,
 			lastSentAt = 0,
 		},
 		-- Degrees around the minimap's outer edge; 240 is 7 o'clock.
@@ -2615,6 +2618,29 @@ function ns.SetTotalIncluded(key, included)
 	selection[key] = included and true or false
 end
 
+-- Profession notifications have their own character list. They must not move
+-- the Total tab's selection or the graphs: watching cooldowns is a different
+-- question from adding a character to a total.
+function ns.ProfessionNotifyIncludes(key)
+	local selection = ns.db and ns.db.settings and ns.db.settings.professionNotifySelect
+	if not selection then
+		return true
+	end
+	return selection[key] ~= false
+end
+
+function ns.SetProfessionNotifyIncluded(key, included)
+	if not key or not (ns.db and ns.db.settings) then
+		return
+	end
+	local selection = ns.db.settings.professionNotifySelect
+	if not selection then
+		selection = {}
+		ns.db.settings.professionNotifySelect = selection
+	end
+	selection[key] = included and true or false
+end
+
 function ns.SelectAllTotal()
 	if ns.db and ns.db.settings then
 		ns.db.settings.totalSelect = nil
@@ -4449,7 +4475,13 @@ HandleTallyEvent = function(event, ...)
 			BeginSession(nil, nil)
 		end
 		if not ns.db.settings.quiet then
-			ns.Print("Loaded - /tally opens your statistics, or click the minimap icon.")
+			local char = ns.GetChar()
+			local points = (char and ns.DataPoints and ns.DataPoints(char)) or 0
+			local notify = ns.db.settings.professionNotify or {}
+			local notificationsOn = notify.chat ~= false or notify.chime ~= false or notify.caps ~= false
+			ns.Print("Loaded - Tracking "..ns.FormatNumber(points)
+				..(points == 1 and " point of data." or " points of data.")
+				.." Notifications "..(notificationsOn and "on." or "off."))
 		end
 	elseif event == "PLAYER_ENTERING_WORLD" then
 		local isInitialLogin, isReloadingUi = ...

@@ -109,7 +109,13 @@ local function SelectTab(id)
 	activeTab = id
 	-- The characters picker belongs to the view that opened it; changing tab
 	-- closes it rather than leaving a window over a page it does not describe.
-	if charPickers.panel and charPickers.panel.shown then
+	if charPickers.panels then
+		for _, picker in pairs(charPickers.panels) do
+			if picker.shown then
+				ShowCharPicker(picker.kind or "daily", false)
+			end
+		end
+	elseif charPickers.panel and charPickers.panel.shown then
 		ShowCharPicker(charPickers.panel.kind or "daily", false)
 	end
 	UpdateTabs()

@@ -126,9 +126,9 @@ end
 local originalDialogVolume
 local restoringVolume = false
 
-local function PlayChime()
+local function PlayChime(force)
 	local settings = NotifySettings()
-	if not settings.chime then
+	if not settings.chime and not force then
 		return
 	end
 	local kit = ResolveChime(settings.chimeKey)
@@ -161,6 +161,9 @@ local function PlayChime()
 	end
 end
 
+-- The Total tab's selection, still used by the profession matrix and the
+-- Total tab's cooldown board. It is deliberately separate from the
+-- notification list below.
 local function SelectedCharacters()
 	local selected = {}
 	local known = ns.KnownCharacters()
@@ -178,13 +181,33 @@ local function SelectedCharacters()
 	return selected
 end
 
+-- The characters whose profession cooldowns may be notified. This is its own
+-- list: watching cooldowns is a separate question from adding a character to
+-- a combined figure, the graphs or the auction.
+local function NotifyCharacters()
+	local selected = {}
+	local known = ns.KnownCharacters()
+	for index = 1, #known do
+		local entry = known[index]
+		if ns.ProfessionNotifyIncludes(entry.key) then
+			selected[#selected + 1] = {
+				key = entry.key,
+				char = entry.char,
+				name = ns.DisplayName(entry.char),
+				live = entry.live,
+			}
+		end
+	end
+	return selected
+end
+
 -- Which characters a notification may cover. "This character" means the one
 -- being played, and only while it is ticked in the Total picker. "All
 -- selected characters" covers every ticked character. With both off there is
 -- nothing to announce, so the engine stays quiet.
 local function NotifyTargets()
 	local settings = NotifySettings()
-	local selected = SelectedCharacters()
+	local selected = NotifyCharacters()
 	if settings.allSelected then
 		return selected
 	end
@@ -519,7 +542,7 @@ end
 local function BuildNotification(list)
 	local colour = Colour()
 	local base = ColourCode(colour) or "|cffffff00"
-	local currentSelected = ns.charKey and ns.TotalIncludes(ns.charKey)
+	local currentSelected = ns.charKey and ns.ProfessionNotifyIncludes(ns.charKey)
 	local messages = {}
 	if #list == 1 then
 		local entry = list[1]
@@ -536,6 +559,38 @@ local function BuildNotification(list)
 		end
 	end
 	if not currentSelected then
+		messages[#messages + 1] = base.."Current character is not selected - its cooldowns are not notified.|r"
+	end
+	return messages, colour
+end
+
+-- The login check is a catch-up, not a live alert: one line per character,
+-- naming that character's ready cooldowns together, rather than a line for
+-- every cooldown across the account.
+local function BuildLoginNotification(list)
+	local colour = Colour()
+	local base = ColourCode(colour) or "|cffffff00"
+	local byCharacter, order = {}, {}
+	for index = 1, #list do
+		local entry = list[index]
+		local key = entry.ownerKey or "?"
+		local group = byCharacter[key]
+		if not group then
+			group = { entry = entry, names = {} }
+			byCharacter[key] = group
+			order[#order + 1] = key
+		end
+		group.names[#group.names + 1] = ItemText(entry, base)..base
+			.." ("..tostring(entry.profession or "?")..")|r"
+	end
+	local messages = {}
+	for index = 1, #order do
+		local group = byCharacter[order[index]]
+		local names = table.concat(group.names, ", ")
+		messages[#messages + 1] = base.."Cooldowns ready - |r"
+			..CharacterText(group.entry, base)..base..": "..names..".|r"
+	end
+	if not (ns.charKey and ns.ProfessionNotifyIncludes(ns.charKey)) then
 		messages[#messages + 1] = base.."Current character is not selected - its cooldowns are not notified.|r"
 	end
 	return messages, colour
@@ -614,7 +669,7 @@ local function CheckNearCooldowns(targets, now)
 	end
 end
 
-local function Flush(now)
+local function Flush(now, login)
 	local list = {}
 	for _, cd in pairs(notifyPending) do
 		if not (cd.readyAt and cd.readyAt > now) then
@@ -629,12 +684,18 @@ local function Flush(now)
 	local interval = IntervalSeconds()
 	local last = tonumber(settings.lastSentAt) or 0
 	-- The interval is a hold-back between messages, not a poll. Anything that
-	-- became ready while it ran waits and joins the next message.
-	if interval > 0 and last > 0 and (now - last) < interval then
+	-- became ready while it ran waits and joins the next message. The login
+	-- check is the exception: it is the one catch-up after entering the world.
+	if not login and interval > 0 and last > 0 and (now - last) < interval then
 		return
 	end
 	SortPending(list)
-	local messages, colour = BuildNotification(list)
+	local messages, colour
+	if login then
+		messages, colour = BuildLoginNotification(list)
+	else
+		messages, colour = BuildNotification(list)
+	end
 	if settings.chat and DEFAULT_CHAT_FRAME then
 		for index = 1, #messages do
 			DEFAULT_CHAT_FRAME:AddMessage(messages[index], colour.r, colour.g, colour.b)
@@ -667,6 +728,7 @@ local function CheckNotifications(now)
 	ScanItemCooldowns()
 	ScanProfessionCooldowns()
 	local selected = NotifyTargets()
+	local loginFlush = false
 	if not initialScanDone then
 		if not settings.loginNotify then
 			-- Seed the existing ready cooldowns silently. Turning login
@@ -686,10 +748,11 @@ local function CheckNotifications(now)
 				end
 			end
 			initialScanDone = true
-		elseif (now - loginAt) < (tonumber(settings.loginDelay) or 0) then
+		elseif (now - loginAt) < (tonumber(settings.loginDelay) or 15) then
 			return
 		else
 			initialScanDone = true
+			loginFlush = true
 		end
 	end
 
@@ -707,7 +770,7 @@ local function CheckNotifications(now)
 		end
 	end
 	CheckNearCooldowns(selected, now)
-	Flush(now)
+	Flush(now, loginFlush)
 end
 
 local function StartTicker()
@@ -852,14 +915,84 @@ local function ScanSpellCooldowns()
 		ns.Trace("profession cooldowns: "..tostring(err))
 	end
 end
-ns.On("PLAYER_LOGIN", ScanCooldownsSafely, "Professions")
+-- The login check has its own clock: fifteen seconds is short enough to feel
+-- prompt, but the ten-second ticker would otherwise make it land anywhere
+-- between ten and twenty-five seconds after entering the world.
+local function OnLoginCooldowns()
+	loginAt = Now()
+	ScanCooldownsSafely()
+	local settings = NotifySettings()
+	if not settings.loginNotify then
+		return
+	end
+	local delay = tonumber(settings.loginDelay) or 15
+	if delay < 0 then
+		delay = 0
+	end
+	local function Check()
+		local ok, err = pcall(CheckNotifications, Now())
+		if not ok then
+			ns.Trace("profession notifications: "..tostring(err))
+		end
+	end
+	if type(C_Timer) == "table" and type(C_Timer.After) == "function" then
+		C_Timer.After(math.max(0.5, delay), Check)
+	else
+		Check()
+	end
+end
+
+ns.On("PLAYER_LOGIN", OnLoginCooldowns, "Professions")
 ns.On("BAG_UPDATE_COOLDOWN", ScanItemsSafely, "Professions")
 ns.On("SPELL_UPDATE_COOLDOWN", ScanSpellCooldowns, "Professions")
 ns.On("TRADE_SKILL_SHOW", ScanCooldownsSafely, "Professions")
 ns.On("TRADE_SKILL_LIST_UPDATE", ScanCooldownsSafely, "Professions")
 
+-- The per-character cooldown totals: how many distinct cooldowns have been
+-- used, how many activations that is, and the summed cooldown duration of
+-- those activations. Older saves have no onSeconds, so the span of each use
+-- is the fallback.
+local function CooldownSummary(char)
+	local store = char and char.professions
+	local stats = type(store) == "table" and store.cooldownStats or nil
+	if type(stats) ~= "table" then
+		return nil
+	end
+	local tracked, activations, seconds = 0, 0, 0
+	for _, entry in pairs(stats) do
+		if type(entry) == "table" then
+			local uses = tonumber(entry.uses) or 0
+			if uses > 0 then
+				tracked = tracked + 1
+				activations = activations + uses
+				local on = tonumber(entry.onSeconds)
+				if not on then
+					on = uses * (tonumber(entry.span) or 0)
+				end
+				seconds = seconds + on
+			end
+		end
+	end
+	if tracked == 0 then
+		return nil
+	end
+	return { tracked = tracked, activations = activations, seconds = seconds }
+end
+
+local function CooldownSummaryText(char)
+	local summary = CooldownSummary(char)
+	if not summary then
+		return nil
+	end
+	return ns.FormatNumber(summary.tracked)..(summary.tracked == 1 and " cooldown tracked" or " cooldowns tracked")
+		.."  ·  "..ns.FormatNumber(summary.activations)..(summary.activations == 1 and " activation" or " activations")
+		.."  ·  "..ns.FormatDuration(summary.seconds).." cooldown time"
+end
+
 ns.ScanItemCooldowns = ScanItemCooldowns
 ns.ProfessionCooldowns = BuildCooldownList
+ns.ProfessionCooldownSummary = CooldownSummary
+ns.ProfessionCooldownSummaryText = CooldownSummaryText
 ns.ProfessionNotify = {}
 ns.ProfessionNotify.Settings = NotifySettings
 ns.ProfessionNotify.NotifySettings = NotifySettings
@@ -868,10 +1001,17 @@ ns.ProfessionNotify.Chimes = CHIME_POOL
 ns.ProfessionNotify.GetChimeEntries = ChimeEntries
 ns.ProfessionNotify.ResolveChime = ResolveChime
 ns.ProfessionNotify.PlayChime = PlayChime
+ns.ProfessionNotify.TestChime = function()
+	-- A test plays even while the Play chime switch is off: that switch is
+	-- about notifications, and testing is how the sound and volume are chosen.
+	PlayChime(true)
+end
 ns.ProfessionNotify.IntervalSeconds = IntervalSeconds
 ns.ProfessionNotify.IsEnabled = IsEnabled
 ns.ProfessionNotify.SetEnabled = SetEnabled
 ns.ProfessionNotify.SelectedCharacters = SelectedCharacters
+ns.ProfessionNotify.NotifyCharacters = NotifyCharacters
+ns.ProfessionNotify.Summary = CooldownSummary
 ns.ProfessionNotify.Tick = CheckNotifications
 ns.ProfessionNotify.Scan = ScanItemCooldowns
 ns.professions.Cooldowns = ns.ProfessionCooldowns

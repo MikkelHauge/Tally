@@ -1,8 +1,9 @@
 -- Tally - the character picker.
 --
--- One window shared by every view that offers it. It reads and writes
--- the addon's one selection (ns.TotalIncludes), so a tick anywhere means
--- the same thing everywhere.
+-- Two windows share this file. The Total window reads and writes the addon's
+-- one combined selection (ns.TotalIncludes); the notifications window reads
+-- and writes the profession notification list (ns.ProfessionNotifyIncludes),
+-- so a tick in one never changes the other.
 local addonName, ns = ...
 
 -- Helpers and constants from the files loaded above (see Tally.toc).
@@ -121,14 +122,15 @@ do
 		return "name A-Z"
 	end
 
-	-- One selection for the whole addon, so a tick here means the same thing in
-	-- the Total tab, the daily graph and the level-times chart.
-	local function PickerShown(key)
-		return ns.TotalIncludes(key)
+	-- Each picker kind names the selection it edits. The Total tab, the graphs,
+	-- the auction and the level-times chart share the combined selection; the
+	-- notifications window has its own list.
+	local function PickerShown(pickerInfo, key)
+		return pickerInfo.includes(key)
 	end
 
-	local function PickerSet(key, wanted)
-		ns.SetTotalIncluded(key, wanted)
+	local function PickerSet(pickerInfo, key, wanted)
+		pickerInfo.setIncluded(key, wanted)
 	end
 
 	-- The window's rows: everyone Tally has read, with what is known about them
@@ -162,40 +164,59 @@ do
 		return rows
 	end
 
-	-- The window: one of them, whichever view opens it, and the same rows in
-	-- every case because there is one selection underneath.
+	-- The window: one per selection group, with the same rows in every case
+	-- because the row builder is shared.
 	local PICKER_TITLE = "Characters"
 	local PICKER_NOTE = "Tick the characters to use. The same ticks apply everywhere: the combined figures, the economy graph and the level-times chart. Horde is on the left, Alliance on the right. Left-click a row to tick or untick it; the balance under the cursor is in the row's own tooltip."
+	local NOTIFY_TITLE = "Notification characters"
+	local NOTIFY_NOTE = "Tick the characters whose profession cooldowns should be notified. These ticks only affect profession notifications; they do not change the Total tab, the graphs or the auction. Horde is on the left, Alliance on the right."
 
-	-- Both views ask for the same window; the entries differ only in nothing at
-	-- all now, since a tick means the same thing everywhere. The table stays so
-	-- the call sites read the same way.
+	local function RefreshTotalViews()
+		ns.RefreshEconomyGraph()
+		ns.RefreshTotalChart()
+		ns.RefreshCombinedNow()
+		ns.RefreshAuctionPages()
+		if ns.professionsUI and ns.professionsUI.RefreshViews then
+			ns.professionsUI.RefreshViews()
+		end
+	end
+
+	-- Kinds that share a group share one window and one selection. `daily` and
+	-- `levels` are the Total group; `notify` is its own list.
 	PICKER_INFO = {
 		daily = {
+			group = "total",
 			title = PICKER_TITLE,
 			note = PICKER_NOTE,
 			rows = PickerRows,
 			trace = "characters",
-			onChange = function()
-				ns.RefreshEconomyGraph()
-				ns.RefreshTotalChart()
-				ns.RefreshCombinedNow()
-				ns.RefreshAuctionPages()
-				if ns.professionsUI and ns.professionsUI.RefreshViews then
-					ns.professionsUI.RefreshViews()
-				end
-			end,
+			includes = function(key) return ns.TotalIncludes(key) end,
+			setIncluded = function(key, wanted) ns.SetTotalIncluded(key, wanted) end,
+			onChange = RefreshTotalViews,
 		},
 		levels = {
+			group = "total",
 			title = PICKER_TITLE,
 			note = PICKER_NOTE,
 			rows = PickerRows,
 			trace = "characters",
+			includes = function(key) return ns.TotalIncludes(key) end,
+			setIncluded = function(key, wanted) ns.SetTotalIncluded(key, wanted) end,
+			onChange = RefreshTotalViews,
+		},
+		notify = {
+			group = "notify",
+			title = NOTIFY_TITLE,
+			note = NOTIFY_NOTE,
+			rows = PickerRows,
+			trace = "notification characters",
+			countSuffix = " notified",
+			includes = function(key) return ns.ProfessionNotifyIncludes(key) end,
+			setIncluded = function(key, wanted) ns.SetProfessionNotifyIncluded(key, wanted) end,
 			onChange = function()
-				ns.RefreshEconomyGraph()
-				ns.RefreshTotalChart()
-				ns.RefreshCombinedNow()
-				ns.RefreshAuctionPages()
+				if ns.RefreshProfessionNotifyPanel then
+					ns.RefreshProfessionNotifyPanel()
+				end
 				if ns.professionsUI and ns.professionsUI.RefreshViews then
 					ns.professionsUI.RefreshViews()
 				end
@@ -208,14 +229,16 @@ do
 	-- character, both factions under their own heading, each with the colour its
 	-- line is drawn in. Rows are ticked rather than names clicked.
 	BuildCharPicker = function(page, kind)
-		-- One window, whatever opens it: the second call for the other view
+		local pickerInfo = PICKER_INFO[kind]
+		local group = pickerInfo.group or "total"
+		-- One window per selection group: the second call for the same group
 		-- reuses the first, so there is a single picker with a single state.
 		-- Both callers pass the frame every page sits in, so it covers any tab.
-		if charPickers.panel then
-			charPickers[kind] = charPickers.panel
+		charPickers.panels = charPickers.panels or {}
+		if charPickers.panels[group] then
+			charPickers[kind] = charPickers.panels[group]
 			return
 		end
-		local pickerInfo = PICKER_INFO[kind]
 		local panel = CreateFrame("Frame", nil, page, "BackdropTemplate")
 		panel:SetAllPoints(page)
 		panel:EnableMouse(true)
@@ -235,7 +258,7 @@ do
 		panel:SetBackdropBorderColor(ACCENT[1], ACCENT[2], ACCENT[3], 0.35)
 		panel.title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
 		panel.title:SetPoint("TOPLEFT", 14, -12)
-		panel.title:SetText(PICKER_TITLE)
+		panel.title:SetText(pickerInfo.title or PICKER_TITLE)
 		panel.title:SetTextColor(ACCENT[1], ACCENT[2], ACCENT[3])
 		panel.count = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
 		panel.count:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -14, -14)
@@ -245,10 +268,14 @@ do
 		-- Brighter than the settings page's notes: this one sits on a near
 		-- black window and is the first thing read here.
 		panel.note:SetTextColor(0.84, 0.84, 0.84)
-		local picker = { kind = kind, panel = panel, rows = {}, sort = "name", shown = false }
-		-- Both keys point at the one window.
-		charPickers.panel = picker
+		local picker = { kind = kind, group = group, panel = panel, rows = {}, sort = "name", shown = false }
+		-- Each group keeps its own window; the Total group is also exposed as
+		-- charPickers.panel for the callers that predate the notification list.
+		charPickers.panels[group] = picker
 		charPickers[kind] = picker
+		if group == "total" then
+			charPickers.panel = picker
+		end
 
 		panel.rows = {}
 		for index = 1, DAILY_PANEL_ROWS * 2 do
@@ -293,8 +320,8 @@ do
 				if not self.key then
 					return
 				end
-				local shown = PickerShown(self.key)
-				PickerSet(self.key, not shown)
+				local shown = PickerShown(pickerInfo, self.key)
+				PickerSet(pickerInfo, self.key, not shown)
 				-- The picker is the selection itself: a change here ends any
 				-- greyed names the chart was holding open.
 				charPickers.greyed = nil
@@ -365,9 +392,9 @@ do
 					-- ticked and every other character is unticked, so pressing
 					-- Alliance with everything already ticked changes the
 					-- selection instead of doing nothing.
-					PickerSet(row.key, row.faction == faction)
+					PickerSet(pickerInfo, row.key, row.faction == faction)
 				else
-					PickerSet(row.key, wanted)
+					PickerSet(pickerInfo, row.key, wanted)
 				end
 			end
 			charPickers.greyed = nil
@@ -402,6 +429,11 @@ do
 		doneButton:SetText("Done")
 		doneButton:SetScript("OnClick", function()
 			ShowCharPicker(kind, false)
+			-- The notification list was opened from its panel; put the panel
+			-- back so the player lands where they started.
+			if (PICKER_INFO[kind].group or "total") == "notify" and ns.OpenProfessionNotifyPanel then
+				ns.OpenProfessionNotifyPanel()
+			end
 		end)
 
 		panel:Hide()
@@ -471,11 +503,11 @@ do
 
 		local included = 0
 		for index = 1, #rows do
-			if PickerShown(rows[index].key) then
+			if PickerShown(pickerInfo, rows[index].key) then
 				included = included + 1
 			end
 		end
-		local countText = included.." of "..#rows.." used"
+		local countText = included.." of "..#rows..(pickerInfo.countSuffix or " used")
 		if #columns[1] > DAILY_PANEL_ROWS or #columns[2] > DAILY_PANEL_ROWS then
 			countText = countText.." - more characters than fit"
 		end
@@ -505,7 +537,7 @@ do
 						local entry = item.entry
 						local char = entry.char or {}
 						local color = entry.color or CharColor(char)
-						local shown = PickerShown(entry.key)
+						local shown = PickerShown(pickerInfo, entry.key)
 						row.key = entry.key
 						row.tooltipRow = entry
 						row.head:Hide()
@@ -536,16 +568,29 @@ do
 		if not picker then
 			return
 		end
+		local pickerInfo = PICKER_INFO[kind]
 		picker.shown = shown and true or false
 		if shown then
+			-- Only one picker at a time, whichever list it edits.
+			if charPickers.panels then
+				for group, other in pairs(charPickers.panels) do
+					if other ~= picker and other.shown then
+						other.shown = false
+						other.panel:Hide()
+					end
+				end
+			end
 			RefreshCharPicker(kind)
 			picker.panel:Show()
 		else
 			picker.panel:Hide()
-			-- Closing with nobody ticked re-includes the character being
-			-- played, so a combined view is never left empty.
-			ns.EnsureSomeTotalIncluded()
-			PICKER_INFO[kind].onChange()
+			-- Closing the Total list with nobody ticked re-includes the
+			-- character being played, so a combined view is never left empty.
+			-- The notification list may be empty without harm.
+			if (pickerInfo.group or "total") == "total" then
+				ns.EnsureSomeTotalIncluded()
+			end
+			pickerInfo.onChange()
 		end
 	end
 end

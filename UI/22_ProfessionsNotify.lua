@@ -1,8 +1,9 @@
--- Tally - cooldown notification options.
+-- Tally - profession notification options.
 --
--- A small panel opened from the Economy professions page. It writes the
--- account-wide notification settings and the displayed character's
--- per-cooldown opt-outs; it never stores a second copy of any figure.
+-- A small panel opened from the Overview corner and the Settings page. It
+-- writes the account-wide notification settings, the skill-cap and trainer
+-- message switch, and the displayed character's per-cooldown opt-outs; it
+-- never stores a second copy of any figure.
 local addonName, ns = ...
 
 local ACCENT, TILE_BACKDROP, AMBER, DisplayChar, ShowCharPicker, CutRowText =
@@ -15,6 +16,7 @@ local PNEditBoxes = {}
 local PNVolume
 local PNVolumeText
 local PNSelection
+local PNSummary
 local PNListTitle
 local PNListContent
 local PNListNone
@@ -115,7 +117,7 @@ local function PNRefresh()
 		checkbox:SetChecked(checkbox.getter() and true or false)
 	end
 	PNEditBoxes.interval:SetText(tostring(settings.intervalValue or 30))
-	PNEditBoxes.loginDelay:SetText(tostring(settings.loginDelay or 20))
+	PNEditBoxes.loginDelay:SetText(tostring(settings.loginDelay or 15))
 	local units = { minutes = "minutes", hours = "hours", days = "days" }
 	UIDropDownMenu_SetText(PNDropdowns.unit, units[settings.intervalUnit] or "minutes")
 	local colourLabel = PNEntryLabel(ns.ProfessionNotify.Colours[1])
@@ -142,10 +144,14 @@ local function PNRefresh()
 			PNVolumeText:SetText(tostring(math.floor(volume * 100 + 0.5)).."%")
 		end
 	end
-	local selected = ns.charKey and ns.TotalIncludes(ns.charKey)
-	PNSelection:SetText(selected and "Current character is selected." or "Current character is not selected - its cooldowns are not notified.")
+	local selected = ns.charKey and ns.ProfessionNotifyIncludes(ns.charKey)
+	PNSelection:SetText(selected and "Current character is included." or "Current character is not included.")
 	PNSelection:SetTextColor(selected and 0.65 or AMBER[1], selected and 0.65 or AMBER[2], selected and 0.65 or AMBER[3])
 	local char = DisplayChar()
+	local summaryText = char and ns.ProfessionCooldownSummaryText and ns.ProfessionCooldownSummaryText(char) or nil
+	if PNSummary then
+		PNSummary:SetText(summaryText or "")
+	end
 	PNListTitle:SetText(char and ("Cooldowns for "..(char.name or "this character")) or "Cooldowns")
 	PNSyncing = false
 	PNRefreshRows()
@@ -243,9 +249,10 @@ local function PNAddDropdown(parent, x, y, label, width, getEntries, getter, set
 end
 
 local function PNBuild(parent)
-	PNPanel = CreateFrame("Frame", "TallyProfessionNotifyPanel", parent, "BackdropTemplate")
+	local host = ns.contentFrame or parent
+	PNPanel = CreateFrame("Frame", "TallyProfessionNotifyPanel", host, "BackdropTemplate")
 	PNPanel:SetSize(500, 440)
-	PNPanel:SetPoint("CENTER", parent, "CENTER", 0, 0)
+	PNPanel:SetPoint("CENTER", host, "CENTER", 0, 0)
 	PNPanel:SetFrameStrata("DIALOG")
 	PNPanel:SetBackdrop(TILE_BACKDROP)
 	PNPanel:SetBackdropColor(0.04, 0.04, 0.06, 0.98)
@@ -267,7 +274,7 @@ local function PNBuild(parent)
 
 	local title = PNPanel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
 	title:SetPoint("TOPLEFT", 16, -12)
-	title:SetText("Profession cooldown notifications")
+	title:SetText("Profession notifications")
 	title:SetTextColor(ACCENT[1], ACCENT[2], ACCENT[3])
 
 	local note = PNPanel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
@@ -275,7 +282,7 @@ local function PNBuild(parent)
 	note:SetWidth(460)
 	note:SetJustifyH("LEFT")
 	note:SetTextColor(0.68, 0.68, 0.68)
-	note:SetText("These options only control the ready message for profession cooldowns.")
+	note:SetText("Cooldown alerts, skill-cap messages and trainer reminders. Character ticks here are only for notifications; the Total tab and the graphs keep their own list.")
 
 	local close = CreateFrame("Button", nil, PNPanel, "UIPanelCloseButton")
 	close:SetPoint("TOPRIGHT", PNPanel, "TOPRIGHT", -6, -4)
@@ -288,52 +295,61 @@ local function PNBuild(parent)
 	PNSelection:SetWidth(310)
 	PNSelection:SetJustifyH("LEFT")
 
+	PNSummary = PNPanel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+	PNSummary:SetPoint("TOPLEFT", 18, -80)
+	PNSummary:SetWidth(310)
+	PNSummary:SetJustifyH("LEFT")
+	PNSummary:SetTextColor(0.7, 0.7, 0.7)
+
 	local chars = CreateFrame("Button", nil, PNPanel, "UIPanelButtonTemplate")
-	chars:SetSize(86, 18)
+	chars:SetSize(100, 18)
 	chars:SetPoint("TOPRIGHT", PNPanel, "TOPRIGHT", -46, -60)
 	chars:SetText("characters")
 	chars:SetScript("OnClick", function()
-		-- The picker is a page-level window; closing the panel first keeps
-		-- the two from covering each other. The ticks are the same wherever
-		-- the picker is opened.
+		-- The notification list is its own picker: changing it must not move
+		-- the Total tab's selection or the graphs.
 		PNPanel:Hide()
-		ShowCharPicker("levels", true)
+		ShowCharPicker("notify", true)
 	end)
 
-	PNAddCheckbox(PNPanel, 18, -92, "Notify for this character", "thisChar",
+	PNAddCheckbox(PNPanel, 18, -108, "Notify for this character", "thisChar",
 		function() return PNSettings().thisChar end,
 		function(value) PNSettings().thisChar = value end,
-		"Send a ready message for the character being played. That character must also be ticked in the Total picker.")
-	PNAddCheckbox(PNPanel, 18, -118, "Other selected characters", "allSelected",
+		"Send a ready message for the character being played. That character must also be ticked in the notification character list.")
+	PNAddCheckbox(PNPanel, 18, -134, "Other notification characters", "allSelected",
 		function() return PNSettings().allSelected end,
 		function(value) PNSettings().allSelected = value end,
-		"Also include every other character ticked in the Total picker, not only the one being played.")
-	PNAddCheckbox(PNPanel, 18, -144, "Include cooldown items", "items",
+		"Also include every other character ticked in the notification character list, not only the one being played.")
+	PNAddCheckbox(PNPanel, 18, -160, "Include cooldown items", "items",
 		function() return PNSettings().items ~= false end,
 		function(value) PNSettings().items = value end,
 		"Include bag-item cooldowns such as the Salt Shaker, alongside crafting recipes.")
-	PNAddCheckbox(PNPanel, 270, -92, "Send chat message", "chat",
+	PNAddCheckbox(PNPanel, 18, -186, "Skill cap and trainer messages", "caps",
+		function() return PNSettings().caps ~= false end,
+		function(value) PNSettings().caps = value end,
+		"Print the nearing-cap and cap messages, and the reminder thirty seconds after reaching level 10, 20 or 35. Every message also plays the chime when Play chime is on.")
+	PNAddCheckbox(PNPanel, 270, -108, "Send chat message", "chat",
 		function() return PNSettings().chat ~= false end,
 		function(value) PNSettings().chat = value end,
 		"Print the ready list in chat.")
-	PNAddCheckbox(PNPanel, 270, -118, "Play chime", "chime",
+	PNAddCheckbox(PNPanel, 270, -134, "Play chime", "chime",
 		function() return PNSettings().chime ~= false end,
 		function(value) PNSettings().chime = value end,
-		"Play a chime with the ready list.")
-	PNAddCheckbox(PNPanel, 270, -144, "Check once after login", "loginNotify",
+		"Play a chime with the ready list, and with the skill-cap and trainer messages.")
+	PNAddCheckbox(PNPanel, 270, -160, "Check once after login", "loginNotify",
 		function() return PNSettings().loginNotify ~= false end,
 		function(value) PNSettings().loginNotify = value end,
-		"Check for ready cooldowns once shortly after you enter the world. The wait is the box below.")
-	PNAddCheckbox(PNPanel, 270, -170, "Warn before ready", "near",
+		"Check for ready cooldowns once shortly after you enter the world, with one line per character. The wait is the box below.")
+	PNAddCheckbox(PNPanel, 270, -186, "Warn before ready", "near",
 		function() return PNSettings().near ~= false end,
 		function(value) PNSettings().near = value end,
 		"Warn 30 minutes and then 10 minutes before a cooldown is ready, not only when it is ready.")
 
-	PNEditBoxes.interval = PNAddEdit(PNPanel, 18, -202, "Repeat every", 42,
+	PNEditBoxes.interval = PNAddEdit(PNPanel, 18, -218, "Repeat every", 42,
 		function() return PNSettings().intervalValue end,
 		function(value) PNSettings().intervalValue = value end,
 		"How often the same ready cooldown is mentioned again while it stays ready.")
-	PNDropdowns.unit = PNAddDropdown(PNPanel, 150, -202, "", 82,
+	PNDropdowns.unit = PNAddDropdown(PNPanel, 150, -218, "", 82,
 		function()
 			return {
 				{ key = "minutes", label = "minutes" },
@@ -347,7 +363,7 @@ local function PNBuild(parent)
 	-- than at a fixed x that only looked aligned by accident.
 	PNDropdowns.unit:ClearAllPoints()
 	PNDropdowns.unit:SetPoint("LEFT", PNEditBoxes.interval, "RIGHT", 8, 0)
-	PNEditBoxes.loginDelay = PNAddEdit(PNPanel, 270, -202, "Wait after login", 42,
+	PNEditBoxes.loginDelay = PNAddEdit(PNPanel, 270, -218, "Wait after login", 42,
 		function() return PNSettings().loginDelay end,
 		function(value) PNSettings().loginDelay = value end,
 		"Tally starts checking this many seconds after you enter the world, once the client has finished loading.")
@@ -355,17 +371,17 @@ local function PNBuild(parent)
 	delayUnit:SetPoint("LEFT", PNEditBoxes.loginDelay, "RIGHT", 6, 0)
 	delayUnit:SetText("seconds")
 
-	PNDropdowns.chime = PNAddDropdown(PNPanel, 18, -234, "Chime sound", 110,
+	PNDropdowns.chime = PNAddDropdown(PNPanel, 18, -250, "Chime sound", 110,
 		function() return ns.ProfessionNotify.GetChimeEntries() end,
 		function() return PNSettings().chimeKey end,
 		function(value) PNSettings().chimeKey = value end)
-	PNDropdowns.colour = PNAddDropdown(PNPanel, 270, -234, "Message colour", 90,
+	PNDropdowns.colour = PNAddDropdown(PNPanel, 270, -250, "Message colour", 90,
 		function() return ns.ProfessionNotify.Colours end,
 		function() return PNSettings().colourKey end,
 		function(value) PNSettings().colourKey = value end)
 
 	local volumeLabel = PNPanel:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-	volumeLabel:SetPoint("TOPLEFT", 18, -268)
+	volumeLabel:SetPoint("TOPLEFT", 18, -284)
 	volumeLabel:SetText("Chime volume")
 	PNVolume = CreateFrame("Slider", nil, PNPanel, "OptionsSliderTemplate")
 	PNVolume:SetPoint("LEFT", volumeLabel, "RIGHT", 8, 0)
@@ -392,12 +408,31 @@ local function PNBuild(parent)
 		end
 	end)
 
+	local testChime = CreateFrame("Button", nil, PNPanel, "UIPanelButtonTemplate")
+	testChime:SetSize(110, 20)
+	testChime:SetPoint("TOPRIGHT", PNPanel, "TOPRIGHT", -18, -280)
+	testChime:SetText("Test chime")
+	testChime:SetScript("OnClick", function()
+		if ns.ProfessionNotify.TestChime then
+			ns.ProfessionNotify.TestChime()
+		end
+	end)
+	testChime:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		GameTooltip:AddLine("Test chime", ACCENT[1], ACCENT[2], ACCENT[3])
+		GameTooltip:AddLine("Plays the selected chime at the volume on the slider. It works even while Play chime is off, so the sound can be chosen before turning notifications on.", 1, 1, 1, true)
+		GameTooltip:Show()
+	end)
+	testChime:SetScript("OnLeave", function()
+		GameTooltip:Hide()
+	end)
+
 	PNListTitle = PNPanel:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-	PNListTitle:SetPoint("TOPLEFT", 18, -296)
+	PNListTitle:SetPoint("TOPLEFT", 18, -312)
 	PNListTitle:SetTextColor(ACCENT[1], ACCENT[2], ACCENT[3])
 
 	local scroll = CreateFrame("ScrollFrame", nil, PNPanel, "UIPanelScrollFrameTemplate")
-	scroll:SetPoint("TOPLEFT", 16, -314)
+	scroll:SetPoint("TOPLEFT", 16, -330)
 	scroll:SetPoint("BOTTOMRIGHT", -34, 14)
 	PNListContent = CreateFrame("Frame", nil, scroll)
 	PNListContent:SetWidth(420)
@@ -407,6 +442,9 @@ local function PNBuild(parent)
 	PNListNone:SetPoint("TOPLEFT", 2, 0)
 	PNListNone:SetText("No cooldowns tracked for this character yet.")
 
+	if ns.BuildCharPicker then
+		ns.BuildCharPicker(host, "notify")
+	end
 	PNPanel:SetScript("OnShow", PNRefresh)
 	return PNPanel
 end

@@ -56,6 +56,39 @@ local function CanonicalProfessionName(name)
 	return name
 end
 
+-- The four Classic/Forever profession ranks. `level` is the level needed to
+-- learn that rank; Apprentice has no requirement and 300 is the last cap.
+local PROFESSION_RANKS = {
+	{ name = "Apprentice", from = 1, to = 75, level = 0, nextLevel = 10, nextName = "Journeyman" },
+	{ name = "Journeyman", from = 75, to = 150, level = 10, nextLevel = 20, nextName = "Expert" },
+	{ name = "Expert", from = 150, to = 225, level = 20, nextLevel = 35, nextName = "Artisan" },
+	{ name = "Artisan", from = 225, to = 300, level = 35 },
+}
+
+local function RankTier(rank)
+	rank = tonumber(rank) or 0
+	for index = 1, #PROFESSION_RANKS do
+		if rank <= PROFESSION_RANKS[index].to then
+			return PROFESSION_RANKS[index]
+		end
+	end
+	return PROFESSION_RANKS[#PROFESSION_RANKS]
+end
+
+-- The rank whose cap is exactly this number. RankTier(75) answers Journeyman,
+-- because 75 is inside that rank's range; a character sitting at 75/75 is
+-- still an Apprentice at its cap and must be told that, not told about the
+-- Journeyman cap at 150.
+local function TierByCap(cap)
+	cap = tonumber(cap) or 0
+	for index = 1, #PROFESSION_RANKS do
+		if PROFESSION_RANKS[index].to == cap then
+			return PROFESSION_RANKS[index]
+		end
+	end
+	return nil
+end
+
 local function IsSecondary(name)
 	return SECONDARY_ORDER[name] ~= nil
 end
@@ -128,6 +161,12 @@ local function EnsureProfessions(char)
 	end
 	if type(store.byLevel) ~= "table" then
 		store.byLevel = {}
+	end
+	if type(store.capWarned) ~= "table" then
+		store.capWarned = {}
+	end
+	if type(store.capNearWarned) ~= "table" then
+		store.capNearWarned = {}
 	end
 	if type(store.crafts) ~= "table" then
 		store.crafts = {}
@@ -221,11 +260,12 @@ function ns.SetProfessionCooldown(profession, name, recipeID, readyAt, span, ite
 	local key = "recipe:"..profession..":"..name
 	local stats = store.cooldownStats[key]
 	if type(stats) ~= "table" then
-		stats = { uses = 0, offSeconds = 0, longestOff = 0 }
+		stats = { uses = 0, offSeconds = 0, longestOff = 0, onSeconds = 0 }
 		store.cooldownStats[key] = stats
 	end
 	stats.name = name
 	stats.profession = profession
+	stats.span = total > 0 and total or stats.span
 	stats.itemID = itemID or (type(old) == "table" and old.itemID) or stats.itemID
 	if stats.itemID then
 		local _, _, quality = ns.ItemInfo(stats.itemID)
@@ -265,6 +305,7 @@ function ns.SetProfessionCooldown(profession, name, recipeID, readyAt, span, ite
 				stats.offSince = nil
 			end
 			stats.uses = (stats.uses or 0) + 1
+			stats.onSeconds = (tonumber(stats.onSeconds) or 0) + total
 			stats.lastUsedAt = now
 		end
 		stats.offSince = nil
@@ -291,6 +332,143 @@ function ns.SetProfessionCooldown(profession, name, recipeID, readyAt, span, ite
 		-- the ready notification still has a marker to compare against.
 		book.cooldowns[name] = entry
 	end
+end
+
+local function CapMessagesEnabled()
+	local notify = ns.ProfessionNotify
+	if notify and notify.Settings then
+		local settings = notify.Settings()
+		if settings and settings.caps == false then
+			return false
+		end
+	end
+	return true
+end
+
+local function PlayCapChime()
+	if ns.ProfessionNotify and ns.ProfessionNotify.PlayChime then
+		ns.ProfessionNotify.PlayChime()
+	end
+end
+
+local function CheckCapWarning(store, name, newRank, maxRank, level)
+	if not CapMessagesEnabled() then
+		return
+	end
+	if not (ns.MerchantsFavorAvailable and ns.MerchantsFavorAvailable()) then
+		return
+	end
+	local tier = TierByCap(newRank)
+	if not tier or not tier.nextLevel then
+		return
+	end
+	-- The player has already trained past this cap; the message would be stale.
+	if (tonumber(maxRank) or 0) > tier.to then
+		return
+	end
+	if type(store.capWarned) ~= "table" then
+		store.capWarned = {}
+	end
+	local warned = store.capWarned[name]
+	if warned and newRank < warned then
+		store.capWarned[name] = nil
+		warned = nil
+	end
+	if warned == tier.to then
+		return
+	end
+	store.capWarned[name] = tier.to
+	if level >= tier.nextLevel then
+		ns.Print("Your "..name.." skill is at its cap of "..tier.to.."/"..tier.to..". Visit your "..name.." trainer.")
+	else
+		ns.Print("Your "..name.." skill is at its cap of "..tier.to.."/"..tier.to..". Reach level "..tier.nextLevel..", then visit your "..name.." trainer.")
+	end
+	ns.Trace("profession cap: "..name.." "..tier.to.."/"..tier.to.." at level "..level)
+	PlayCapChime()
+end
+
+-- Twenty-five points before a rank's cap the trainer can raise the ceiling,
+-- provided the character is high enough level. No message at 275: Artisan has
+-- no next rank, so there is nothing to train.
+local function CheckNearCapWarning(store, name, oldRank, newRank, maxRank, level)
+	if not CapMessagesEnabled() then
+		return
+	end
+	if not (ns.MerchantsFavorAvailable and ns.MerchantsFavorAvailable()) then
+		return
+	end
+	local tier = TierByCap(maxRank) or RankTier(newRank)
+	if not tier or not tier.nextLevel then
+		return
+	end
+	local threshold = tier.to - 25
+	if newRank < threshold or oldRank >= threshold or newRank >= tier.to then
+		return
+	end
+	if (tonumber(maxRank) or 0) > tier.to then
+		return
+	end
+	if type(store.capNearWarned) ~= "table" then
+		store.capNearWarned = {}
+	end
+	local warned = store.capNearWarned[name]
+	if warned and newRank < warned - 25 then
+		store.capNearWarned[name] = nil
+		warned = nil
+	end
+	if warned == tier.to then
+		return
+	end
+	store.capNearWarned[name] = tier.to
+	if level >= tier.nextLevel then
+		ns.Print("Your "..name.." skill is nearing its cap of "..tier.to..". Visit your "..name.." trainer.")
+	else
+		ns.Print("Your "..name.." skill is nearing its cap of "..tier.to..". At level "..tier.nextLevel..", visit your "..name.." trainer.")
+	end
+	ns.Trace("profession near cap: "..name.." "..newRank.."/"..tier.to.." at level "..level)
+	PlayCapChime()
+end
+
+-- Thirty seconds after the level that opens a rank, remind only the
+-- professions that are already within 25 points of that rank's skill cap and
+-- have not been trained past it yet.
+local function CheckLevelTrainerReminder(level)
+	level = tonumber(level) or 0
+	if level ~= 10 and level ~= 20 and level ~= 35 then
+		return
+	end
+	if not CapMessagesEnabled() then
+		return
+	end
+	if not (ns.MerchantsFavorAvailable and ns.MerchantsFavorAvailable()) then
+		return
+	end
+	local char = ns.GetChar and ns.GetChar() or nil
+	if not char then
+		return
+	end
+	local store = EnsureProfessions(char)
+	local lines = {}
+	for _, skill in ipairs(store.skills or {}) do
+		local name = CanonicalProfessionName(skill.name)
+		local rank = tonumber(skill.rank) or 0
+		local maxRank = tonumber(skill.maxRank) or 0
+		local tier = TierByCap(maxRank) or RankTier(rank)
+		if tier and tier.nextLevel == level
+			and rank >= tier.to - 25
+			and rank <= tier.to then
+			lines[#lines + 1] = "Your "..name.." skill ("..rank.."/"..tier.to
+				..") can be trained to "..tier.nextName..". Visit your "..name.." trainer."
+		end
+	end
+	if #lines == 0 then
+		return
+	end
+	for index = 1, #lines do
+		ns.Print(lines[index])
+	end
+	ns.Trace("profession trainer reminder: level "..level.." ("..#lines..")")
+	PlayCapChime()
 end
 
 -- One live skill-up, credited to the character level it happened at. The
@@ -321,6 +499,21 @@ local function NoteSkillGain(char, store, name, gained, at)
 		store.byLevel[level] = row
 	end
 	row[name] = (tonumber(row[name]) or 0) + gained
+	local skill
+	for index = 1, #store.skills do
+		local candidate = store.skills[index]
+		if type(candidate) == "table" and CanonicalProfessionName(candidate.name) == name then
+			skill = candidate
+			break
+		end
+	end
+	if skill then
+		local oldRank = tonumber(skill.rank) or 0
+		local newRank = oldRank + gained
+		local maxRank = tonumber(skill.maxRank) or 0
+		CheckNearCapWarning(store, name, oldRank, newRank, maxRank, level)
+		CheckCapWarning(store, name, newRank, maxRank, level)
+	end
 	ns.Trace("profession skill: "..name.." +"..gained.." at level "..level)
 end
 
@@ -2303,6 +2496,34 @@ end
 
 ns.SnapshotProfessions = SnapshotProfessions
 
+-- The level that opens a rank is easy to miss if it arrives mid-fight, so the
+-- trainer reminder waits thirty seconds and then names only the professions
+-- that are already at the skill threshold and still below the rank's cap.
+ns.On("PLAYER_LEVEL_UP", function(level)
+	level = tonumber(level)
+	if level ~= 10 and level ~= 20 and level ~= 35 then
+		return
+	end
+	local expected = level
+	local function Remind()
+		local current = 0
+		if type(UnitLevel) == "function" then
+			local ok, value = pcall(UnitLevel, "player")
+			current = ok and (tonumber(value) or 0) or 0
+		end
+		-- If the character has moved on to another level, the reminder for
+		-- this threshold would be stale.
+		if current >= expected then
+			CheckLevelTrainerReminder(expected)
+		end
+	end
+	if type(C_Timer) == "table" and type(C_Timer.After) == "function" then
+		C_Timer.After(30, Remind)
+	else
+		Remind()
+	end
+end, "Professions")
+
 -- Retail can raise a skill-line change without a usable CHAT_MSG_SKILL for
 -- the old-world "Classic Cooking" style lines. Snapshot on the event where
 -- the client offers it; ns.On drops an unknown event safely on older clients.
@@ -2343,6 +2564,8 @@ ns.professions.NoteLearnedRecipe = ns.NoteLearnedRecipe
 ns.professions.IsEvent = ns.IsProfessionEvent
 ns.professions.HandleEvent = ns.HandleProfessionEvent
 ns.ProfessionSecondary = SECONDARY_PROFESSIONS
+ns.ProfessionRanks = PROFESSION_RANKS
+ns.ProfessionRankTier = RankTier
 ns.ProfessionIsSecondary = IsSecondary
 ns.ProfessionIsIgnored = IsIgnored
 ns.ProfessionSecondaryOrder = SecondaryOrder

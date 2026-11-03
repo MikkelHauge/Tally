@@ -2,19 +2,55 @@
 local addonName, ns = ...
 
 -- Helpers and constants from the files loaded above (see Tally.toc).
-local ACCENT, TILE_WIDTH, ROW_START, TILE_BACKDROP, VALUE_COLOR, GREEN, RED, ROW_DIM, overviewWidgets, ClassColorCode, SetTile, CreateTileRow, DisplayChar, SessionTileText, ReadPlayerXP, CreateInfoButton, TopDeathZone, PercentText, ShortWhen, pageRefresh =
-	ns.ACCENT, ns.TILE_WIDTH, ns.ROW_START, ns.TILE_BACKDROP, ns.VALUE_COLOR, ns.GREEN, ns.RED, ns.ROW_DIM, ns.overviewWidgets, ns.ClassColorCode, ns.SetTile, ns.CreateTileRow, ns.DisplayChar, ns.SessionTileText, ns.ReadPlayerXP, ns.CreateInfoButton, ns.TopDeathZone, ns.PercentText, ns.ShortWhen, ns.pageRefresh
+local ACCENT, TILE_WIDTH, ROW_START, TILE_BACKDROP, VALUE_COLOR, GREEN, RED, ROW_DIM, overviewWidgets, ClassColorCode, SetTile, CreateTileRow, DisplayChar, SessionTileText, ReadPlayerXP, TopDeathZone, PercentText, ShortWhen, pageRefresh =
+	ns.ACCENT, ns.TILE_WIDTH, ns.ROW_START, ns.TILE_BACKDROP, ns.VALUE_COLOR, ns.GREEN, ns.RED, ns.ROW_DIM, ns.overviewWidgets, ns.ClassColorCode, ns.SetTile, ns.CreateTileRow, ns.DisplayChar, ns.SessionTileText, ns.ReadPlayerXP, ns.TopDeathZone, ns.PercentText, ns.ShortWhen, ns.pageRefresh
 -------------------------------------------------------------------------------
 -- Overview page
 -------------------------------------------------------------------------------
 
--- Hover text for the overview's Info button: what the figures cover, what a
--- session is, and how to clear the record.
-local OVERVIEW_INFO = {
-	'Tally records played time, gold, combat, loot and exploration for every character that logs in with it loaded.',
-	"AFK time counts as played time unless you switch it off in Settings, and a reset there cannot be undone.",
-	'Anything that happens while Tally is not running cannot be tracked.',
-}
+-- A small "notifications" button in the corner where the old Info button sat.
+-- It opens the Profession notifications panel; its hover carries the same
+-- per-character cooldown summary the panel shows.
+local function CreateNotifyButton(parent)
+	local button = CreateFrame("Button", nil, parent, "BackdropTemplate")
+	button:SetHeight(18)
+	button:SetFrameLevel((parent:GetFrameLevel() or 1) + 4)
+	button:SetBackdrop(TILE_BACKDROP)
+	button:SetBackdropColor(0.06, 0.06, 0.08, 0.6)
+	button:SetBackdropBorderColor(1, 1, 1, 0.12)
+	button:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -4, 0)
+	button.text = button:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+	button.text:SetPoint("LEFT", 9, 0)
+	button.text:SetTextColor(ACCENT[1], ACCENT[2], ACCENT[3])
+	button.text:SetText("notifications")
+	button:SetWidth(button.text:GetStringWidth() + 18)
+	button.hover = button:CreateTexture(nil, "HIGHLIGHT")
+	button.hover:SetAllPoints(button)
+	button.hover:SetColorTexture(1, 1, 1, 0.09)
+	button:EnableMouse(true)
+	button:RegisterForClicks("LeftButtonUp")
+	button:SetScript("OnClick", function()
+		if ns.OpenProfessionNotifyPanel then
+			ns.OpenProfessionNotifyPanel()
+		end
+	end)
+	button:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_BOTTOMRIGHT")
+		GameTooltip:AddLine("Profession notifications", ACCENT[1], ACCENT[2], ACCENT[3])
+		GameTooltip:AddLine("Cooldown alerts, skill caps and trainer reminders.", 1, 1, 1, true)
+		local char = DisplayChar()
+		local summary = char and ns.ProfessionCooldownSummaryText and ns.ProfessionCooldownSummaryText(char) or nil
+		if summary then
+			GameTooltip:AddLine(summary, 0.8, 0.8, 0.8, true)
+		end
+		GameTooltip:AddLine("Click to open the options.", 0.7, 0.7, 0.7, true)
+		GameTooltip:Show()
+	end)
+	button:SetScript("OnLeave", function()
+		GameTooltip:Hide()
+	end)
+	return button
+end
 
 -- Both the bar figures and the XP/h rate use the same compact form, so a
 -- large number never sits beside an abbreviated one on the same line.
@@ -33,8 +69,8 @@ local function BuildOverviewPage(page)
 	widgets.detail:SetPoint("TOPLEFT", 2, -22)
 	widgets.detail:SetTextColor(0.8, 0.8, 0.8)
 
-	-- Corner text: the recorded-since line sits to the left of the Info
-	-- button, with the data-point count on the line below.
+	-- Corner text: the recorded-since line sits to the left of the
+	-- notifications button, with the data-point count on the line below.
 	widgets.since = page:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
 	widgets.since:SetTextColor(0.55, 0.55, 0.55)
 
@@ -42,8 +78,8 @@ local function BuildOverviewPage(page)
 	widgets.points:SetPoint("TOPRIGHT", -2, -22)
 	widgets.points:SetTextColor(0.55, 0.55, 0.55)
 
-	widgets.info = CreateInfoButton(page, "About the overview", OVERVIEW_INFO)
-	widgets.since:SetPoint("TOPRIGHT", widgets.info, "TOPLEFT", -8, -3)
+	widgets.notify = CreateNotifyButton(page)
+	widgets.since:SetPoint("TOPRIGHT", widgets.notify, "TOPLEFT", -8, -3)
 
 	widgets.hero = {}
 	CreateTileRow(page, ROW_START, { "Lifetime played", "Tracked played time", "This session", "Level" }, widgets.hero)
@@ -595,7 +631,8 @@ local function RefreshOverview()
 		SetTile(widgets.activity[3], ns.FormatNumber(char.loot.items), "Vendor value", nil, nil, ns.MoneyColored(char.loot.value))
 	end
 	local sessionSub, sessionAvg = SessionTileText(char.sessions, session)
-	SetTile(widgets.activity[4], ns.FormatNumber(char.sessions.count), sessionSub, nil, nil, sessionAvg)
+	local sessionCount = ns.SessionTotals(char.sessions, session)
+	SetTile(widgets.activity[4], ns.FormatNumber(sessionCount), sessionSub, nil, nil, sessionAvg)
 
 	-- Row 4: the world.
 	local explore = char.explore

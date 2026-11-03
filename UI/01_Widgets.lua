@@ -298,18 +298,35 @@ local function PercentText(part, whole)
 end
 
 -- The Sessions tile reads the same on the overview and on the playtime page,
--- so its two figures are built in one place: the session open now on the left
--- (or the longest finished one when nothing is open), and the average of the
--- finished sessions against the right edge. The average is over the finished
--- sessions only, because an open session has no length to divide by yet.
-local function SessionTileText(sessions, liveSession)
-	local sub, average = "no finished sessions yet", nil
-	if (sessions.count or 0) > 0 then
-		sub = "longest "..ns.FormatDuration(sessions.longest, true)
-		average = "avg "..ns.FormatDuration(math.floor((sessions.seconds or 0) / sessions.count), true)
-	end
+-- so its figures are built in one place. The session open now counts as one
+-- session and joins the average: it is listed in the same history card, and
+-- leaving it out made the tile disagree with the rows beneath it. The playtime
+-- page only passes a live session for the character being played.
+local function SessionTotals(sessions, liveSession)
+	local count = sessions.count or 0
+	local seconds = sessions.seconds or 0
+	local longest = sessions.longest or 0
 	if liveSession then
-		sub = "current: "..ns.FormatDuration(liveSession.seconds, true)
+		local live = liveSession.seconds or 0
+		count = count + 1
+		seconds = seconds + live
+		if live > longest then
+			longest = live
+		end
+	end
+	return count, seconds, longest
+end
+
+local function SessionTileText(sessions, liveSession)
+	local count, seconds, longest = SessionTotals(sessions, liveSession)
+	local sub, average = "no sessions yet", nil
+	if count > 0 then
+		if liveSession then
+			sub = "current: "..ns.FormatDuration(liveSession.seconds or 0, true)
+		else
+			sub = "longest "..ns.FormatDuration(longest, true)
+		end
+		average = "avg "..ns.FormatDuration(math.floor(seconds / count), true)
 	end
 	return sub, average
 end
@@ -1116,6 +1133,7 @@ ns.ApplyTallyIcon, ns.CreateIconButton = ApplyTallyIcon, CreateIconButton
 ns.CreateTile, ns.SetTile, ns.CreateTileRow = CreateTile, SetTile, CreateTileRow
 ns.DisplayChar, ns.PercentText = DisplayChar, PercentText
 ns.SessionTileText, ns.ReadPlayerXP = SessionTileText, ReadPlayerXP
+ns.SessionTotals = SessionTotals
 ns.QualityCode, ns.ItemQuality = QualityCode, ItemQuality
 ns.SortedCounts = SortedCounts
 ns.SortedCategories, ns.ShortWhen = SortedCategories, ShortWhen

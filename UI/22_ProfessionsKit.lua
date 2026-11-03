@@ -5,8 +5,10 @@
 -- it reads ns.professions and draws into the card it is given.
 local addonName, ns = ...
 
-local ACCENT, TILE_BACKDROP, ClassColorCode, CreateListCard, ROW_DETAIL_DIM, CATEGORY_HEAD_COLOR, CARD_TITLE_DIM_CODE, QualityCode, FillScrollingLines, ShowCardText, AddCardTitleNote, MakeCardScrollable, AddCardScrollbar, RowHoverTick, CooldownBarTick, RowAtCursor, CreateCornerButton, SetCornerLabel, GREEN, CreateTileRow, SetTile, CutRowText, AMBER =
-	ns.ACCENT, ns.TILE_BACKDROP, ns.ClassColorCode, ns.CreateListCard, ns.ROW_DETAIL_DIM, ns.CATEGORY_HEAD_COLOR, ns.CARD_TITLE_DIM_CODE, ns.QualityCode, ns.FillScrollingLines, ns.ShowCardText, ns.AddCardTitleNote, ns.MakeCardScrollable, ns.AddCardScrollbar, ns.RowHoverTick, ns.CooldownBarTick, ns.RowAtCursor, ns.CreateCornerButton, ns.SetCornerLabel, ns.GREEN, ns.CreateTileRow, ns.SetTile, ns.CutRowText, ns.AMBER
+local ACCENT, TILE_BACKDROP, ClassColorCode, CreateListCard, ROW_DETAIL_DIM, CATEGORY_HEAD_COLOR, CARD_TITLE_DIM_CODE, QualityCode, FillScrollingLines, ShowCardText, AddCardTitleNote, MakeCardScrollable, AddCardScrollbar, RowHoverTick, CooldownBarTick, RowAtCursor, CreateCornerButton, SetCornerLabel, GREEN, CreateTileRow, SetTile, CutRowText, AMBER, RED =
+	ns.ACCENT, ns.TILE_BACKDROP, ns.ClassColorCode, ns.CreateListCard, ns.ROW_DETAIL_DIM, ns.CATEGORY_HEAD_COLOR, ns.CARD_TITLE_DIM_CODE, ns.QualityCode, ns.FillScrollingLines, ns.ShowCardText, ns.AddCardTitleNote, ns.MakeCardScrollable, ns.AddCardScrollbar, ns.RowHoverTick, ns.CooldownBarTick, ns.RowAtCursor, ns.CreateCornerButton, ns.SetCornerLabel, ns.GREEN, ns.CreateTileRow, ns.SetTile, ns.CutRowText, ns.AMBER, ns.RED
+
+local GOLD = { 1.0, 0.84, 0.0 }
 
 local PROFESSION_SORTS = { "alpha", "high", "low" }
 local MATRIX_PROFESSIONS = {
@@ -431,9 +433,54 @@ local function LevelRow(names, values, colors, left, leftColor)
 	return row
 end
 
--- The profession columns a character should see: every profession Tally
--- knows, filtered to the ones the character actually has. Saved data is used
--- for offline alts; the live character can also ask GetProfessions.
+local RANK_FALLBACK = {
+	{ name = "Apprentice", from = 1, to = 75, level = 0, nextLevel = 10 },
+	{ name = "Journeyman", from = 75, to = 150, level = 10, nextLevel = 20 },
+	{ name = "Expert", from = 150, to = 225, level = 20, nextLevel = 35 },
+	{ name = "Artisan", from = 225, to = 300, level = 35 },
+}
+
+local function RankTierFor(rank)
+	rank = tonumber(rank) or 0
+	local ranks = ns.ProfessionRanks
+	if type(ranks) ~= "table" then
+		ranks = RANK_FALLBACK
+	end
+	for index = 1, #ranks do
+		if rank <= ranks[index].to then
+			return ranks[index]
+		end
+	end
+	return ranks[#ranks]
+end
+
+local function RankColor(rank)
+	rank = tonumber(rank) or 0
+	if rank <= 0 then
+		return nil
+	end
+	if rank >= 300 then
+		return GOLD
+	end
+	local tier = RankTierFor(rank)
+	if not tier then
+		return nil
+	end
+	if rank >= tier.to then
+		return RED
+	end
+	if rank >= tier.to - 25 then
+		return AMBER
+	end
+	return GREEN
+end
+
+-- The profession columns a character should see: only professions the
+-- character currently has. Historical tallies (learned, crafts, recipes and
+-- by-level gains) deliberately do not add a column: an abandoned profession
+-- keeps its history but must disappear from the current matrix.
+local MATRIX_SECONDARY = { Cooking = true, Fishing = true, ["First Aid"] = true }
+
 local function MatrixProfessions(char)
 	local names = {}
 	if not char then
@@ -441,65 +488,49 @@ local function MatrixProfessions(char)
 	end
 	local known = {}
 	local store = char.professions
-	if type(store) == "table" then
+	local liveChecked = false
+	if char == ns.GetChar() then
+		local live = {}
+		if type(GetProfessions) == "function" and type(GetProfessionInfo) == "function" then
+			local ok, professions = pcall(GetProfessions)
+			if ok and type(professions) == "table" then
+				liveChecked = true
+				for _, index in ipairs(professions) do
+					local okInfo, name, _, rank = pcall(GetProfessionInfo, index)
+					local canonical = okInfo and CanonicalProfession(name) or nil
+					if canonical and MATRIX_PROFESSION_SET[canonical] and (tonumber(rank) or 0) > 0 then
+						live[canonical] = true
+					end
+				end
+			end
+		end
+		-- On clients whose GetProfessions returns only the primary pair, the
+		-- skill lines still name the secondary professions. A rank of 0 is an
+		-- abandoned line, not a learned profession, so it is skipped.
+		if type(GetNumSkillLines) == "function" and type(GetSkillLineInfo) == "function" then
+			local ok, count = pcall(GetNumSkillLines)
+			if ok and type(count) == "number" then
+				for index = 1, count do
+					local okLine, name, isHeader, _, rank = pcall(GetSkillLineInfo, index)
+					local canonical = okLine and CanonicalProfession(name) or nil
+					if canonical and not isHeader and MATRIX_PROFESSION_SET[canonical]
+						and (tonumber(rank) or 0) > 0
+						and (not liveChecked or MATRIX_SECONDARY[canonical]) then
+						live[canonical] = true
+					end
+				end
+			end
+		end
+		if liveChecked then
+			known = live
+		end
+	end
+	if not liveChecked and type(store) == "table" then
+		-- Offline alts: the saved list is all Tally has. Rank 0 is an
+		-- abandoned line and is excluded.
 		for _, skill in ipairs(store.skills or {}) do
-			if type(skill) == "table" and skill.name then
+			if type(skill) == "table" and skill.name and (tonumber(skill.rank) or 0) > 0 then
 				known[CanonicalProfession(skill.name)] = true
-			end
-		end
-		for name in pairs(store.recipes or {}) do
-			known[CanonicalProfession(name)] = true
-		end
-		for name in pairs(store.crafts or {}) do
-			known[CanonicalProfession(name)] = true
-		end
-		for name in pairs(store.learned or {}) do
-			known[CanonicalProfession(name)] = true
-		end
-		for _, gains in pairs(store.byLevel or {}) do
-			if type(gains) == "table" then
-				for name in pairs(gains) do
-					known[CanonicalProfession(name)] = true
-				end
-			end
-		end
-	end
-	for name in pairs(char.gathering or {}) do
-		known[CanonicalProfession(name)] = true
-	end
-	local fishing = char.fishing
-	if type(fishing) == "table"
-		and ((tonumber(fishing.casts) or 0) > 0
-			or (tonumber(fishing.catches) or 0) > 0
-			or next(fishing.items or {}) ~= nil) then
-		known.Fishing = true
-	end
-	if char == ns.GetChar()
-		and type(GetProfessions) == "function"
-		and type(GetProfessionInfo) == "function" then
-		local ok, professions = pcall(GetProfessions)
-		if ok and type(professions) == "table" then
-			for _, index in ipairs(professions) do
-				local okInfo, name = pcall(GetProfessionInfo, index)
-				if okInfo and type(name) == "string" then
-					known[CanonicalProfession(name)] = true
-				end
-			end
-		end
-	end
-	-- Classic has no GetProfessions; the skill lines still name the learned
-	-- professions, including the gathering ones.
-	if char == ns.GetChar()
-		and type(GetNumSkillLines) == "function"
-		and type(GetSkillLineInfo) == "function" then
-		local ok, count = pcall(GetNumSkillLines)
-		if ok and type(count) == "number" then
-			for index = 1, count do
-				local okLine, name, isHeader = pcall(GetSkillLineInfo, index)
-				local canonical = CanonicalProfession(name)
-				if okLine and not isHeader and canonical and MATRIX_PROFESSION_SET[canonical] then
-					known[canonical] = true
-				end
 			end
 		end
 	end
@@ -674,7 +705,7 @@ local function SkillLevelRows(char, names, order)
 			end
 			local rankText = maxRank > 0 and (" ("..after.."/"..maxRank..")") or ""
 			values[index] = "+"..gain..rankText
-			colors[index] = capHit and AMBER or (gain > 0 and GREEN or ROW_DETAIL_DIM)
+			colors[index] = RankColor(after) or (gain > 0 and GREEN or ROW_DETAIL_DIM)
 			local line = name.."  +"..gain..rankText
 			if capHit and milestone then
 				line = line.."  ·  "..(after == milestone and "reached " or "passed ")..milestone
@@ -683,6 +714,16 @@ local function SkillLevelRows(char, names, order)
 			levelTotal = levelTotal + gain
 			stats.professionTotals[name] = (stats.professionTotals[name] or 0) + gain
 			rankAtLevel[name] = before
+		end
+		lines[#lines + 1] = { text = " " }
+		local ranks = ns.ProfessionRanks or RANK_FALLBACK
+		for rankIndex = 1, #ranks do
+			local tier = ranks[rankIndex]
+			local requirement = (tonumber(tier.level) or 0) > 0
+				and ("level "..tier.level) or "no level requirement"
+			lines[#lines + 1] = {
+				text = tier.name.."  "..tier.from.."-"..tier.to.."  ·  "..requirement,
+			}
 		end
 		stats.totalGains = stats.totalGains + levelTotal
 		stats.levelTotals[level] = levelTotal
@@ -695,7 +736,7 @@ local function SkillLevelRows(char, names, order)
 		row.tip = {
 			kind = "note", title = "Level "..level,
 			lines = lines,
-			note = "Only skill-ups Tally saw happen are counted here. The bracket is the rank at that level out of the current cap; amber marks a 25-point milestone.",
+			note = "Only skill-ups Tally saw happen are counted here. Green = more than 25 points below the next cap, amber = within 25, red = at the cap, gold = 300. The bracket is the rank at that level.",
 			key = "skillLevel|"..level.."|"..table.concat(names, ","),
 		}
 		rows[#rows + 1] = row
@@ -718,18 +759,14 @@ local function SkillLevelRows(char, names, order)
 		local total = stats.professionTotals[name] or 0
 		local rank = currentRanks[name] or 0
 		local maxRank = maxRanks[name] or 0
-		if not stats.highestProfession or total > (stats.highestGains or 0) then
-			stats.highestProfession, stats.highestGains = name, total
-		end
-		if not stats.lowestProfession or total < (stats.lowestGains or 0) then
-			stats.lowestProfession, stats.lowestGains = name, total
-		end
 		if maxRank > 0 then
 			if not stats.highestRankName or rank > (stats.highestRank or 0) then
 				stats.highestRankName, stats.highestRank, stats.highestRankMax = name, rank, maxRank
+				stats.highestRankGains = total
 			end
 			if not stats.lowestRankName or rank < (stats.lowestRank or 0) then
 				stats.lowestRankName, stats.lowestRank, stats.lowestRankMax = name, rank, maxRank
+				stats.lowestRankGains = total
 			end
 		end
 	end
@@ -932,15 +969,24 @@ local function RefreshLevelTiles(card, names, stats)
 	end
 
 	if stats.highestRankName then
+		local highestTier = RankTierFor(stats.highestRank)
+		local highestLines = {
+			{ text = "Current rank "..(stats.highestRank or 0).."/"..(stats.highestRankMax or 0) },
+			{ text = ns.FormatNumber(stats.highestRankGains or 0).." skill gained since Tally started counting" },
+			{ text = "The highest current rank of the listed professions" },
+		}
+		if highestTier then
+			highestLines[#highestLines + 1] = {
+				text = highestTier.name.." · "..highestTier.from.."-"..highestTier.to.." · "
+					..((tonumber(highestTier.level) or 0) > 0 and ("level "..highestTier.level) or "no level requirement"),
+			}
+		end
 		SetTile(tiles[3], (stats.highestRank or 0).."/"..(stats.highestRankMax or 0),
-			CutRowText(stats.highestRankName, 18).." · +"..ns.FormatNumber(stats.highestGains or 0))
+			CutRowText(stats.highestRankName, 18).." · +"..ns.FormatNumber(stats.highestRankGains or 0),
+			RankColor(stats.highestRank))
 		tiles[3].tipInfo = {
 			kind = "note", title = stats.highestRankName,
-			lines = {
-				{ text = "Current rank "..(stats.highestRank or 0).."/"..(stats.highestRankMax or 0) },
-				{ text = ns.FormatNumber(stats.highestGains or 0).." skill gained since Tally started counting" },
-				{ text = "The highest current rank of the listed professions" },
-			},
+			lines = highestLines,
 			note = "The big figure is the current rank; the line under it is the live skill gained.",
 		}
 	else
@@ -949,15 +995,24 @@ local function RefreshLevelTiles(card, names, stats)
 	end
 
 	if stats.lowestRankName then
+		local lowestTier = RankTierFor(stats.lowestRank)
+		local lowestLines = {
+			{ text = "Current rank "..(stats.lowestRank or 0).."/"..(stats.lowestRankMax or 0) },
+			{ text = ns.FormatNumber(stats.lowestRankGains or 0).." skill gained since Tally started counting" },
+			{ text = "The lowest current rank of the listed professions" },
+		}
+		if lowestTier then
+			lowestLines[#lowestLines + 1] = {
+				text = lowestTier.name.." · "..lowestTier.from.."-"..lowestTier.to.." · "
+					..((tonumber(lowestTier.level) or 0) > 0 and ("level "..lowestTier.level) or "no level requirement"),
+			}
+		end
 		SetTile(tiles[4], (stats.lowestRank or 0).."/"..(stats.lowestRankMax or 0),
-			CutRowText(stats.lowestRankName, 18).." · +"..ns.FormatNumber(stats.lowestGains or 0))
+			CutRowText(stats.lowestRankName, 18).." · +"..ns.FormatNumber(stats.lowestRankGains or 0),
+			RankColor(stats.lowestRank))
 		tiles[4].tipInfo = {
 			kind = "note", title = stats.lowestRankName,
-			lines = {
-				{ text = "Current rank "..(stats.lowestRank or 0).."/"..(stats.lowestRankMax or 0) },
-				{ text = ns.FormatNumber(stats.lowestGains or 0).." skill gained since Tally started counting" },
-				{ text = "The lowest current rank of the listed professions" },
-			},
+			lines = lowestLines,
 			note = "The big figure is the current rank; the line under it is the live skill gained.",
 		}
 	else
@@ -982,7 +1037,7 @@ local function BuildLevelCard(parent, x, y, width, height, store, offsetField, r
 	card.rowMid4Right = 420
 	card.rowMid5Right = 525
 	AddCardTitleNote(card, title or "Professions by level",
-		"One column per profession this character has, and one row per character level. Rows start highest level first; the corner button switches between descending and ascending, and levels are the only thing they are sorted by. Each cell is the skill gained at that level, from the skill-ups Tally actually saw, with the rank and current cap in brackets. Levels with no gain are kept as +0 so a gap is visible. Amber marks a 25-point milestone. Ranks are read at login; this view is about the live gains, not the rank itself.")
+		"One column per profession this character has, and one row per character level. Rows start highest level first; the corner button switches between descending and ascending, and levels are the only thing they are sorted by. Each cell is the skill gained at that level, from the skill-ups Tally actually saw, with the rank and current cap in brackets. Green = more than 25 points below the next cap, amber = within 25, red = at the cap, gold = 300. Ranks are read at login; this view is about the live gains, not the rank itself.")
 	AddCardScrollbar(card, store, offsetField, refresh)
 	MakeCardScrollable(card, store, offsetField, refresh)
 	card.store = store

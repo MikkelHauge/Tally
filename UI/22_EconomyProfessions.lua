@@ -17,7 +17,8 @@ local function NotifyStatus()
 	local settings = ns.ProfessionNotify.Settings()
 	local chat = settings.chat ~= false
 	local chime = settings.chime ~= false
-	return (chat or chime), chat, chime, settings
+	local caps = settings.caps ~= false
+	return (chat or chime or caps), chat, chime, settings
 end
 
 local function RefreshNotifyTile()
@@ -26,8 +27,11 @@ local function RefreshNotifyTile()
 		return
 	end
 	local on = NotifyStatus()
-	SetTile(tile, "Options", on and "notifications on" or "notifications off",
-		ACCENT, on and GREEN or RED)
+	if on then
+		SetTile(tile, "on", "cooldown and cap alerts", ACCENT, GREEN)
+	else
+		SetTile(tile, "off", "all alerts off", ACCENT, RED)
+	end
 	tile.subRight:SetText("")
 end
 
@@ -136,6 +140,7 @@ local function RefreshCooldownTile(char)
 		end
 	end
 	tile.tipRows = list
+	tile.tipSummary = char and ns.ProfessionCooldownSummaryText and ns.ProfessionCooldownSummaryText(char) or nil
 	if #list == 0 then
 		SetTile(tile, "none", "no cooldowns tracked yet")
 		tile.barBg:Hide()
@@ -224,22 +229,17 @@ end
 
 local function BuildEconomyProfessions(page)
 	economyWidgets.profTiles = {}
-	CreateTileRow(page, -4, { "Items crafted", "Most crafted", "Cooldowns", "Cooldown alerts" },
+	CreateTileRow(page, -4, { "Items crafted", "Most crafted", "Cooldowns", "Notifications" },
 		economyWidgets.profTiles, false)
 	local tiles = economyWidgets.profTiles
 
-	-- The fourth tile is the way into the notification options. It is a
-	-- button in a tile's clothes: same figure area, same hover, one click.
+	-- The fourth tile is a status summary, not a button. The notification
+	-- options live in the Overview corner and in Settings.
 	tiles[4]:EnableMouse(true)
-	tiles[4]:SetScript("OnMouseUp", function(_, button)
-		if button == "LeftButton" then
-			ns.OpenProfessionNotifyPanel()
-		end
-	end)
 	tiles[4]:SetScript("OnEnter", function(self)
 		local on, chat, chime, settings = NotifyStatus()
 		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-		GameTooltip:AddLine("Cooldown notifications", ACCENT[1], ACCENT[2], ACCENT[3])
+		GameTooltip:AddLine("Profession notifications", ACCENT[1], ACCENT[2], ACCENT[3])
 		GameTooltip:AddDoubleLine("Notifications", on and "on" or "off",
 			on and GREEN[1] or RED[1], on and GREEN[2] or RED[2], on and GREEN[3] or RED[3],
 			on and GREEN[1] or RED[1], on and GREEN[2] or RED[2], on and GREEN[3] or RED[3])
@@ -249,16 +249,18 @@ local function BuildEconomyProfessions(page)
 			0.9, 0.9, 0.9, chime and GREEN[1] or RED[1], chime and GREEN[2] or RED[2], chime and GREEN[3] or RED[3])
 		GameTooltip:AddDoubleLine("This character", settings.thisChar and "on" or "off",
 			0.9, 0.9, 0.9, settings.thisChar and GREEN[1] or RED[1], settings.thisChar and GREEN[2] or RED[2], settings.thisChar and GREEN[3] or RED[3])
-		GameTooltip:AddDoubleLine("All selected characters", settings.allSelected and "on" or "off",
+		GameTooltip:AddDoubleLine("Other notification characters", settings.allSelected and "on" or "off",
 			0.9, 0.9, 0.9, settings.allSelected and GREEN[1] or RED[1], settings.allSelected and GREEN[2] or RED[2], settings.allSelected and GREEN[3] or RED[3])
 		GameTooltip:AddDoubleLine("Cooldown items", settings.items ~= false and "on" or "off",
 			0.9, 0.9, 0.9, settings.items ~= false and GREEN[1] or RED[1], settings.items ~= false and GREEN[2] or RED[2], settings.items ~= false and GREEN[3] or RED[3])
+		GameTooltip:AddDoubleLine("Skill cap and trainer messages", settings.caps ~= false and "on" or "off",
+			0.9, 0.9, 0.9, settings.caps ~= false and GREEN[1] or RED[1], settings.caps ~= false and GREEN[2] or RED[2], settings.caps ~= false and GREEN[3] or RED[3])
 		GameTooltip:AddDoubleLine("After login", settings.loginNotify ~= false and "on" or "off",
 			0.9, 0.9, 0.9, settings.loginNotify ~= false and GREEN[1] or RED[1], settings.loginNotify ~= false and GREEN[2] or RED[2], settings.loginNotify ~= false and GREEN[3] or RED[3])
 		GameTooltip:AddDoubleLine("Near-ready warning", settings.near ~= false and "on" or "off",
 			0.9, 0.9, 0.9, settings.near ~= false and GREEN[1] or RED[1], settings.near ~= false and GREEN[2] or RED[2], settings.near ~= false and GREEN[3] or RED[3])
 		GameTooltip:AddDoubleLine("Repeat after", tostring(settings.intervalValue or 30).." "..tostring(settings.intervalUnit or "minutes"), 0.9, 0.9, 0.9, 1, 1, 1)
-		GameTooltip:AddLine("Click to open the options.", 0.7, 0.7, 0.7, true)
+		GameTooltip:AddLine("Open the options from Character > Overview (notifications) or Settings.", 0.7, 0.7, 0.7, true)
 		GameTooltip:Show()
 	end)
 	tiles[4]:SetScript("OnLeave", function()
@@ -327,6 +329,9 @@ local function BuildEconomyProfessions(page)
 				local entry = rows[index]
 				GameTooltip:AddDoubleLine(ItemName(entry).." - "..tostring(entry.profession or "?"),
 					CooldownText(entry), 0.9, 0.9, 0.9, 1, 1, 1)
+			end
+			if self.tipSummary then
+				GameTooltip:AddLine(self.tipSummary, 0.8, 0.8, 0.8, true)
 			end
 			GameTooltip:AddLine("Ready cooldowns come first, then the soonest to finish. The bar follows the first row.", 0.7, 0.7, 0.7, true)
 		end
