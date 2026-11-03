@@ -1,1 +1,6 @@
 package-as: Tally
+
+# The project docs stay on GitHub but are not part of the addon zip.
+ignore:
+  - README.md
+  - LICENSE
