@@ -256,6 +256,59 @@ local function AddInteractions(lines, social)
 		end
 	end
 
+	-- Whatever the client could not name a race and class for. The totals are
+	-- kept even when a stranger's whisper or trade cannot be classified, so
+	-- the remainder is shown rather than quietly disappearing from the card.
+	local function SumBucket(bucket)
+		local total = 0
+		for _, value in pairs(bucket or {}) do
+			if type(value) == "table" then
+				total = total + (tonumber(value.encounters) or 0)
+			else
+				total = total + (tonumber(value) or 0)
+			end
+		end
+		return total
+	end
+	local whispers = social.whispers or {}
+	local tradesTotal = social.trades or {}
+	local duels = social.duels or {}
+	local unknown = {
+		whispersSent = math.max(0, (tonumber(whispers.sent) or 0) - SumBucket(whispersSent)),
+		whispersReceived = math.max(0, (tonumber(whispers.received) or 0) - SumBucket(whispersReceived)),
+		trades = math.max(0, (tonumber(tradesTotal.completed) or 0) - SumBucket(trades)),
+		challenged = math.max(0, (tonumber(duels.challenged) or 0) - SumBucket(challenged)),
+		won = math.max(0, (tonumber(duels.won) or 0) - SumBucket(won)),
+		lost = math.max(0, (tonumber(duels.lost) or 0) - SumBucket(lost)),
+	}
+	local anyUnknown = unknown.whispersSent > 0 or unknown.whispersReceived > 0
+		or unknown.trades > 0 or unknown.challenged > 0
+		or unknown.won > 0 or unknown.lost > 0
+	if anyUnknown then
+		if #keys > 0 then
+			lines[#lines + 1] = {}
+		end
+		lines[#lines + 1] = { left = "Unknown", leftColor = { 0.62, 0.62, 0.62 } }
+		if unknown.whispersSent > 0 then
+			AddLine(lines, "   Whispers sent", "x"..ns.FormatNumber(unknown.whispersSent))
+		end
+		if unknown.whispersReceived > 0 then
+			AddLine(lines, "   Whispers received", "x"..ns.FormatNumber(unknown.whispersReceived))
+		end
+		if unknown.trades > 0 then
+			AddLine(lines, "   Trades completed", "x"..ns.FormatNumber(unknown.trades))
+		end
+		if unknown.challenged > 0 then
+			AddLine(lines, "   Duels challenged", "x"..ns.FormatNumber(unknown.challenged))
+		end
+		if unknown.won > 0 then
+			AddLine(lines, "   Duels won", "x"..ns.FormatNumber(unknown.won))
+		end
+		if unknown.lost > 0 then
+			AddLine(lines, "   Duels lost", "x"..ns.FormatNumber(unknown.lost))
+		end
+	end
+
 	AddHeader(lines, "Guilds")
 	local guild = social.guild or {}
 	local history = guild.history or {}
@@ -343,7 +396,7 @@ local function BuildSocialPage(page)
 	local interactions = CreateListCard(page, 371, -88, 359, 326, "Interactions")
 	socialWidgets.interactions = interactions
 	AddCardTitleNote(interactions, "Interactions",
-		"Every race and class this character has grouped with, traded with, whispered or duelled, with the group time and the counts recorded for each, followed by the guilds the character has been in. A player's race and class is read from the client when possible and remembered by name for this character, so a later whisper or trade can still be counted even after they are out of sight.")
+		"Every race and class this character has grouped with, traded with, whispered or duelled, with the group time and the counts recorded for each, followed by the guilds the character has been in. A player's race and class is read from the client when possible and remembered by name for this character, so a later whisper or trade can still be counted even after they are out of sight. A final Unknown row collects interactions whose race and class the client could not name.")
 	AddCardScrollbar(interactions, socialWidgets, "interactionsOffset", RefreshSocial)
 	MakeCardScrollable(interactions, socialWidgets, "interactionsOffset", RefreshSocial)
 

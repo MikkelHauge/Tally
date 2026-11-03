@@ -2,7 +2,7 @@
 ## Title: Tally
 ## Notes: Character statistics: playtime, gold, combat, loot and exploration - recorded quietly in the background and shown in a clean dashboard.
 ## Author: Mikkel
-## Version: 20261101
+## Version: 20261103
 ## SavedVariables: TallyDB
 ## IconTexture: Interface\Icons\INV_Misc_Book_09
 
@@ -15,6 +15,9 @@ Core/50_Money.lua
 Core/60_Loot.lua
 Core/70_Auras.lua
 Core/80_Explore.lua
+Core/82_Fishing.lua
+Core/83_Gathering.lua
+Core/84_MerchantsFavor.lua
 Core/85_Social.lua
 Core/90_Professions.lua
 Core/92_ProfessionsCooldowns.lua
@@ -33,6 +36,7 @@ UI/20_Overview.lua
 UI/20_Milestones.lua
 UI/20_Timeline.lua
 UI/20_Social.lua
+UI/20_Professions.lua
 UI/20_Character.lua
 UI/21_Playtime.lua
 UI/22_EconomyState.lua
@@ -41,6 +45,7 @@ UI/22_ProfessionsKit.lua
 UI/22_ProfessionsNotify.lua
 UI/22_EconomyProfessions.lua
 UI/22_EconomySecondary.lua
+UI/22_EconomyFavor.lua
 UI/22_EconomyGraph.lua
 UI/22_Economy.lua
 UI/23_CombatState.lua
@@ -48,6 +53,9 @@ UI/23_CombatFights.lua
 UI/23_CombatAuras.lua
 UI/23_CombatKills.lua
 UI/23_Combat.lua
+UI/24_Fishing.lua
+UI/24_Gathered.lua
+UI/24_Crafted.lua
 UI/24_Loot.lua
 UI/25_Explore.lua
 UI/26_TotalState.lua

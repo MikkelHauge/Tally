@@ -473,14 +473,18 @@ end
 -- Only the player's own loot is counted: the line that begins "You receive"
 -- or one whose looter is the player. Everything else is another character's
 -- loot and is not this character's record.
+--
+-- "You receive item: ..." is the client's pushed-item line, used by vendors,
+-- mail and rewards. It is not loot and must not enter the loot tally; a
+-- stack bought from a vendor would otherwise win "most looted item".
 local function OnLootMessage(text, looter)
 	if not text then
 		return
 	end
-	local own = string.find(text, "^You receive loot") or string.find(text, "^You receive item")
+	local own = string.find(text, "^You receive loot")
 	if not own and looter then
 		local player = UnitName("player")
-		own = (player and looter == player) or false
+		own = (player and looter == player and string.find(text, "receives loot")) or false
 	end
 	if not own then
 		return

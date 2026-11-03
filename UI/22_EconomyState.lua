@@ -7,23 +7,11 @@ local addonName, ns = ...
 
 local economyWidgets = { tiles = {}, graph = {}, subview = "ledger" }
 
--- How far back the daily graph can look, and the label its button carries.
--- Defined here because the economy page build wires the button up long before
--- the graph itself is drawn.
-local GRAPH_DAYS = { 3, 7, 14, 31 }
-
-local function NextGraphDays(days)
-	for index = 1, #GRAPH_DAYS do
-		if GRAPH_DAYS[index] == days then
-			return GRAPH_DAYS[index % #GRAPH_DAYS + 1]
-		end
-	end
-	return 14
-end
-
-local function GraphDaysLabel(days)
-	return tostring(days).." days"
-end
+-- How far back the daily graph can look: a window of up to a year, ending up
+-- to a year before today. The daily ledger keeps as many days, so the longest
+-- window is drawn from stored balances rather than guessed at.
+local GRAPH_DAYS_MAX = 365
+local GRAPH_DAYS_DEFAULT = 31
 
 -- One colour per month, for the date labels under the daily graph: a run of
 -- labels in one colour reads as one month, and the day that starts a month
@@ -35,6 +23,6 @@ local MONTH_COLORS = {
 }
 
 ns.economyWidgets = economyWidgets
-ns.NextGraphDays = NextGraphDays
-ns.GraphDaysLabel = GraphDaysLabel
+ns.GRAPH_DAYS_MAX = GRAPH_DAYS_MAX
+ns.GRAPH_DAYS_DEFAULT = GRAPH_DAYS_DEFAULT
 ns.MONTH_COLORS = MONTH_COLORS

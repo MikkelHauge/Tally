@@ -23,7 +23,7 @@ local addonName, ns = ...
 
 -- Build string reported by "/tally debug" and the trace block. Set by the
 -- maintainer; no logic reads it.
-ns.BUILD = "20261101 (Version follows the release date; Forever only.)"
+ns.BUILD = "20261103 (Version follows the release date; Forever only.)"
 
 -- In-memory only: key of the character the window and the printed reports
 -- describe when it differs from the character being played; nil when none.
@@ -58,7 +58,7 @@ local TUNING = {
 	xpMinuteCap = 60,          -- per-minute XP buckets kept (an hour)
 	xpWindowMinutes = 10,      -- the window a rate is measured over
 	bestLootCap = 50,          -- "best finds" list length
-	dailyCap = 120,            -- daily ledger days kept
+	dailyCap = 366,            -- daily ledger days kept (a year, plus today)
 	questXpWindow = 5,         -- experience after a turn-in is that quest's
 	questGoldWindow = 8,       -- and so is reward money arriving within this
 	levelSplitSlack = 2,       -- seconds a count may differ from a /played stretch
@@ -853,6 +853,23 @@ local function EnsureCharShape(char)
 	if type(char.explore.dungeons) ~= "table" then char.explore.dungeons = {} end
 	if type(char.explore.recentFirsts) ~= "table" then char.explore.recentFirsts = {} end
 	char.explore.distance = tonumber(char.explore.distance) or 0
+	if type(char.fishing) ~= "table" then
+		char.fishing = {}
+	end
+	if type(char.fishing.items) ~= "table" then char.fishing.items = {} end
+	if type(char.fishing.zones) ~= "table" then char.fishing.zones = {} end
+	if type(char.fishing.levels) ~= "table" then char.fishing.levels = {} end
+	char.fishing.casts = tonumber(char.fishing.casts) or 0
+	char.fishing.catches = tonumber(char.fishing.catches) or 0
+	if type(char.gathering) ~= "table" then
+		char.gathering = {}
+	end
+	if type(char.currency) ~= "table" then
+		char.currency = {}
+	end
+	if type(char.professions) == "table" and type(char.professions.byLevel) ~= "table" then
+		char.professions.byLevel = {}
+	end
 	if type(char.played) ~= "table" then
 		char.played = {}
 	end
@@ -2649,16 +2666,30 @@ end
 -- moves only while logged in and every move reaches the daily ledger. A
 -- walk below zero means a hole in the ledger; a character without a
 -- recorded balance has no start point. Both are counted, not inferred.
-function ns.GoldTracks(dayCount)
-	dayCount = math.max(2, math.floor(tonumber(dayCount) or 14))
+function ns.GoldTracks(dayCount, endDays)
+	dayCount = math.max(1, math.floor(tonumber(dayCount) or 14))
+	endDays = math.max(0, math.floor(tonumber(endDays) or 0))
 	local result = {
 		days = {}, tracks = {}, members = {}, total = 0,
 		known = 0, noBalance = 0, gaps = 0,
 	}
 	local now = ns.Now()
-	for offset = dayCount - 1, 0, -1 do
+	for offset = endDays + dayCount - 1, endDays, -1 do
 		local stamp = now - offset * 86400
 		result.days[#result.days + 1] = { key = date("%Y-%m-%d", stamp), stamp = stamp }
+	end
+
+	-- A window that ends in the past still needs the days after it: the
+	-- balance at its newest day is today's balance minus every change since.
+	-- The keys are built once, and each character's ledger is walked over
+	-- them; only days inside the window become points.
+	local maxOffset = endDays + dayCount - 1
+	local keyAt, slotOf = {}, {}
+	for offset = 0, maxOffset do
+		keyAt[offset] = date("%Y-%m-%d", now - offset * 86400)
+	end
+	for position = 1, #result.days do
+		slotOf[result.days[position].key] = position
 	end
 
 	local report = ns.ReportChar()
@@ -2715,10 +2746,13 @@ function ns.GoldTracks(dayCount)
 				local points = {}
 				local running = balance
 				local firstKey = date("%Y-%m-%d", char.created or now)
-				for position = #result.days, 1, -1 do
-					local key = result.days[position].key
+				for offset = 0, maxOffset do
+					local key = keyAt[offset]
 					if key >= firstKey then
-						points[position] = running
+						local slot = slotOf[key]
+						if slot then
+							points[slot] = running
+						end
 						local totals = char.gold.daily and char.gold.daily[key]
 						if totals then
 							running = running - ((totals.income or 0) - (totals.expense or 0))
@@ -3289,8 +3323,12 @@ function ns.Records()
 	end
 	local mostZones, mostDungeons, mostDungeonRuns, mostBosses, mostDeathsByChar, fewestDeaths
 	local bestBuyAuction, bestSellAuction, mostSoldUnits, mostBoughtUnits
+	local mostFishCaught, mostValuableCatch, mostFishingCasts, mostFishKinds
 	local fastestTo = {}
 	local mostCraftedByProfession = {}
+	local mostGatheredByProfession = {}
+	local mostCraftedTotalByProfession = {}
+	local favor = { earnedTotal = 0, spentTotal = 0, heldTotal = 0 }
 	local cooldownUses, cooldownOff, cooldownShortest = {}, {}, {}
 	local now = ns.Now()
 
@@ -3425,6 +3463,82 @@ function ns.Records()
 					profession = profession,
 					name = name, classFile = classFile, key = entry.key,
 				}
+			end
+		end
+
+		-- The total number of items crafted in each profession. The row above
+		-- is the single recipe crafted most often; this one is the whole
+		-- profession's output, which is what "most cooked" means.
+		for profession, craftsInProfession in pairs((type(professionStore) == "table" and professionStore.crafts) or {}) do
+			local count = tonumber(craftsInProfession) or 0
+			local best = mostCraftedTotalByProfession[profession]
+			if count > 0 and (not best or count > best.count) then
+				mostCraftedTotalByProfession[profession] = {
+					count = count, profession = profession,
+					name = name, classFile = classFile, key = entry.key,
+				}
+			end
+		end
+
+		-- Items gathered by each gathering profession. The count is what the
+		-- Gathered view shows, so "most mined" and the Mining column agree.
+		local gathering = char.gathering or {}
+		for _, profession in ipairs({ "Mining", "Herbalism", "Skinning" }) do
+			local entry = gathering[profession]
+			local count = type(entry) == "table" and (tonumber(entry.gathered) or 0) or 0
+			if count <= 0 and type(entry) == "table" and type(entry.items) == "table" then
+				for _, item in pairs(entry.items) do
+					count = count + (tonumber(item.count) or 0)
+				end
+			end
+			if count > 0 then
+				local best = mostGatheredByProfession[profession]
+				if not best or count > best.count then
+					mostGatheredByProfession[profession] = {
+						count = count, attempts = tonumber(entry.attempts) or 0,
+						name = name, classFile = classFile, key = entry.key,
+					}
+				end
+			end
+		end
+
+		-- Merchant's Favor: per-character currency total, plus the best day
+		-- and the largest single gain. The UI only shows these on Forever,
+		-- but the figures are harmless to compute from an imported record.
+		local currency = char.currency
+		local favorEntry = type(currency) == "table" and currency[3402]
+		if type(favorEntry) == "table" then
+			local earned = tonumber(favorEntry.earned) or 0
+			local spent = tonumber(favorEntry.spent) or 0
+			local balance = tonumber(favorEntry.balance) or 0
+			favor.earnedTotal = favor.earnedTotal + earned
+			favor.spentTotal = favor.spentTotal + spent
+			favor.heldTotal = favor.heldTotal + balance
+			if earned > 0 and (not favor.mostEarned or earned > favor.mostEarned.count) then
+				favor.mostEarned = { count = earned, name = name, classFile = classFile, key = entry.key }
+			end
+			if spent > 0 and (not favor.mostSpent or spent > favor.mostSpent.count) then
+				favor.mostSpent = { count = spent, name = name, classFile = classFile, key = entry.key }
+			end
+			if balance > 0 and (not favor.mostHeld or balance > favor.mostHeld.count) then
+				favor.mostHeld = { count = balance, name = name, classFile = classFile, key = entry.key }
+			end
+			local bestGain = tonumber(favorEntry.bestGain) or 0
+			if bestGain > 0 and (not favor.bestGain or bestGain > favor.bestGain.count) then
+				favor.bestGain = {
+					count = bestGain, at = favorEntry.bestGainAt,
+					level = tonumber(favorEntry.bestGainLevel) or 0,
+					name = name, classFile = classFile, key = entry.key,
+				}
+			end
+			for day, dayRow in pairs(type(favorEntry.daily) == "table" and favorEntry.daily or {}) do
+				local dayEarned = type(dayRow) == "table" and (tonumber(dayRow.earned) or 0) or 0
+				if dayEarned > 0 and (not favor.bestDay or dayEarned > favor.bestDay.count) then
+					favor.bestDay = {
+						count = dayEarned, day = day,
+						name = name, classFile = classFile, key = entry.key,
+					}
+				end
 			end
 		end
 
@@ -3630,12 +3744,56 @@ function ns.Records()
 				name = name, classFile = classFile, key = entry.key,
 			}
 		end
+
+		-- Fishing: every item looted during a cast counts, so these are
+		-- collection records rather than one-catch records. A character with
+		-- no cast or no catch has nothing here rather than a zero that wins.
+		local fishing = char.fishing or {}
+		local fishCatches = tonumber(fishing.catches) or 0
+		local fishKinds, fishZones = 0, 0
+		for _ in pairs(fishing.items or {}) do
+			fishKinds = fishKinds + 1
+		end
+		for _ in pairs(fishing.zones or {}) do
+			fishZones = fishZones + 1
+		end
+		if fishCatches > 0 and (not mostFishCaught or fishCatches > mostFishCaught.count) then
+			mostFishCaught = {
+				count = fishCatches, kinds = fishKinds, zones = fishZones,
+				name = name, classFile = classFile, key = entry.key,
+			}
+		end
+		if fishKinds > 0 and (not mostFishKinds or fishKinds > mostFishKinds.count) then
+			mostFishKinds = {
+				count = fishKinds, catches = fishCatches,
+				name = name, classFile = classFile, key = entry.key,
+			}
+		end
+		local fishCasts = tonumber(fishing.casts) or 0
+		if fishCasts > 0 and (not mostFishingCasts or fishCasts > mostFishingCasts.count) then
+			mostFishingCasts = {
+				count = fishCasts, catches = fishCatches,
+				name = name, classFile = classFile, key = entry.key,
+			}
+		end
+		local bestCatch = fishing.best
+		if type(bestCatch) == "table" and (tonumber(bestCatch.value) or 0) > 0
+			and (not mostValuableCatch or bestCatch.value > mostValuableCatch.value) then
+			mostValuableCatch = {
+				value = bestCatch.value, item = bestCatch.name, itemID = bestCatch.id,
+				quality = bestCatch.quality, at = bestCatch.at, zone = bestCatch.zone,
+				name = name, classFile = classFile, key = entry.key,
+			}
+		end
 	end
 
 	return {
 		fastestTo = fastestTo, bestRate = bestRate, mostLevels = mostLevels, mostQuests = mostQuests, mostQuestGold = mostQuestGold, mostMailSent = mostMailSent, mostMailReceived = mostMailReceived, mostMessagesSent = mostMessagesSent, mostWhispersReceived = mostWhispersReceived, mostDuelsWon = mostDuelsWon, mostDuelsLost = mostDuelsLost,
 		mostCrafted = mostCrafted, mostCraftedItem = mostCraftedItem, firstLevelUp = firstLevelUp, longestSession = longestSession,
 		mostCraftedByProfession = mostCraftedByProfession,
+		mostGatheredByProfession = mostGatheredByProfession,
+		mostCraftedTotalByProfession = mostCraftedTotalByProfession,
+		favor = favor,
 		cooldownUses = cooldownUses, cooldownOff = cooldownOff, cooldownShortest = cooldownShortest,
 		bestSessionGold = bestSessionGold, bestSessionXp = bestSessionXp,
 		bestDayIncome = bestDayIncome, bestDayExpense = bestDayExpense, bestFind = bestFind,
@@ -3646,6 +3804,8 @@ function ns.Records()
 		mostBosses = mostBosses, mostDeathsByChar = mostDeathsByChar, fewestDeaths = fewestDeaths,
 		bestBuyAuction = bestBuyAuction, bestSellAuction = bestSellAuction,
 		mostSoldUnits = mostSoldUnits, mostBoughtUnits = mostBoughtUnits,
+		mostFishCaught = mostFishCaught, mostValuableCatch = mostValuableCatch,
+		mostFishingCasts = mostFishingCasts, mostFishKinds = mostFishKinds,
 	}
 end
 

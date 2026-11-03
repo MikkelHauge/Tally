@@ -4,6 +4,8 @@ local addonName, ns = ...
 -- Helpers and constants from the files loaded above (see Tally.toc).
 local ACCENT, TILE_WIDTH, TILE_HEIGHT, TILE_GAP, CreateTile, SetTile, CreateTileRow, DisplayChar, QUALITY_NAMES, QUALITY_COLORS, PercentText, QualityCode, ItemQuality, CreateListCard, ROW_STEP, FillCardRows, ShowCardText, ShortWhen, CutRowText, AddCardTitleNote, FillScrollingLines, MakeCardScrollable, pageRefresh =
 	ns.ACCENT, ns.TILE_WIDTH, ns.TILE_HEIGHT, ns.TILE_GAP, ns.CreateTile, ns.SetTile, ns.CreateTileRow, ns.DisplayChar, ns.QUALITY_NAMES, ns.QUALITY_COLORS, ns.PercentText, ns.QualityCode, ns.ItemQuality, ns.CreateListCard, ns.ROW_STEP, ns.FillCardRows, ns.ShowCardText, ns.ShortWhen, ns.CutRowText, ns.AddCardTitleNote, ns.FillScrollingLines, ns.MakeCardScrollable, ns.pageRefresh
+local BuildLootGathered, RefreshLootGathered = ns.BuildLootGathered, ns.RefreshLootGathered
+local BuildLootCrafted, RefreshLootCrafted = ns.BuildLootCrafted, ns.RefreshLootCrafted
 -------------------------------------------------------------------------------
 -- Loot page
 -------------------------------------------------------------------------------
@@ -238,10 +240,10 @@ local function RefreshLoot()
 	end
 end
 
-local function BuildLootPage(page)
-	CreateTileRow(page, -4, { "Items looted", "Total vendor value", "Most valuable find", "Most looted item" }, lootWidgets.tiles, false)
-	lootWidgets.quality = CreateListCard(page, 0, -88, 359, 250, "Looted")
-	lootWidgets.best = CreateListCard(page, 371, -88, 359, 250, "Most valuable finds")
+local function BuildLootContent(content)
+	CreateTileRow(content, -4, { "Items looted", "Total vendor value", "Most valuable find", "Most looted item" }, lootWidgets.tiles, false)
+	lootWidgets.quality = CreateListCard(content, 0, -88, 359, 250, "Looted")
+	lootWidgets.best = CreateListCard(content, 371, -88, 359, 250, "Most valuable finds")
 	AddCardTitleNote(lootWidgets.quality, "Looted",
 		"Every item this character loots, by quality and then the five items looted most often; grey and quest items are left out of the ranking. Other players' loot lines are not counted.")
 	AddCardTitleNote(lootWidgets.best, "Most valuable finds",
@@ -279,9 +281,9 @@ local function BuildLootPage(page)
 	lootWidgets.session = {}
 	local sessionLabels = { "Loot this session", "Session value" }
 	for index = 1, 2 do
-		local tile = CreateTile(page, sessionLabels[index])
+		local tile = CreateTile(content, sessionLabels[index])
 		tile:SetSize(TILE_WIDTH, TILE_HEIGHT)
-		tile:SetPoint("TOPLEFT", page, "TOPLEFT", (index - 1) * (TILE_WIDTH + TILE_GAP), -346)
+		tile:SetPoint("TOPLEFT", content, "TOPLEFT", (index - 1) * (TILE_WIDTH + TILE_GAP), -346)
 		lootWidgets.session[index] = tile
 	end
 
@@ -290,9 +292,9 @@ local function BuildLootPage(page)
 	-- labels are set at refresh time, since a legendary moves the pair up.
 	lootWidgets.qualityBoxes = {}
 	for index = 1, 2 do
-		local tile = CreateTile(page, index == 1 and "Rare items" or "Epic items")
+		local tile = CreateTile(content, index == 1 and "Rare items" or "Epic items")
 		tile:SetSize(TILE_WIDTH, TILE_HEIGHT)
-		tile:SetPoint("TOPLEFT", page, "TOPLEFT", 371 + (index - 1) * (TILE_WIDTH + TILE_GAP), -346)
+		tile:SetPoint("TOPLEFT", content, "TOPLEFT", 371 + (index - 1) * (TILE_WIDTH + TILE_GAP), -346)
 		lootWidgets.qualityBoxes[index] = tile
 	end
 	-- The most looted tile's name can be longer than the tile, so its hover
@@ -318,8 +320,105 @@ local function BuildLootPage(page)
 	mostTile:SetScript("OnLeave", function()
 		GameTooltip:Hide()
 	end)
-	pageRefresh.loot = RefreshLoot
+end
+
+local function SelectLootSubview(name)
+	lootWidgets.subview = name
+	if lootWidgets.lootedFrame then
+		lootWidgets.lootedFrame:SetShown(name == "looted")
+	end
+	if lootWidgets.gatheredFrame then
+		lootWidgets.gatheredFrame:SetShown(name == "gathered")
+	end
+	if lootWidgets.craftedFrame then
+		lootWidgets.craftedFrame:SetShown(name == "crafted")
+	end
+	-- The Gathered view selector belongs to the Gathered page only.
+	local viewButton = ns.lootGatheredWidgets and ns.lootGatheredWidgets.button
+	if viewButton then
+		viewButton:SetShown(name == "gathered")
+	end
+	local buttons = lootWidgets.subButtons or {}
+	for id, button in pairs(buttons) do
+		local active = (id == name)
+		button.underline:SetShown(active)
+		button.text:SetTextColor(active and ACCENT[1] or 0.62, active and ACCENT[2] or 0.62, active and ACCENT[3] or 0.62)
+	end
+	if name == "gathered" and RefreshLootGathered then
+		RefreshLootGathered()
+	elseif name == "crafted" and RefreshLootCrafted then
+		RefreshLootCrafted()
+	else
+		RefreshLoot()
+	end
+end
+
+local function RefreshLootPage()
+	if lootWidgets.subview == "gathered" and RefreshLootGathered then
+		RefreshLootGathered()
+	elseif lootWidgets.subview == "crafted" and RefreshLootCrafted then
+		RefreshLootCrafted()
+	else
+		RefreshLoot()
+	end
+end
+
+local function BuildLootPage(page)
+	lootWidgets.subButtons = {}
+	lootWidgets.subview = "looted"
+	local x = 2
+	local function AddSubButton(id, title)
+		local button = CreateFrame("Button", nil, page)
+		button:SetHeight(18)
+		button.text = button:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+		button.text:SetPoint("LEFT", 0, 0)
+		button.text:SetText(title)
+		button:SetWidth(button.text:GetStringWidth() + 20)
+		button:SetPoint("TOPLEFT", page, "TOPLEFT", x, -2)
+		button.underline = button:CreateTexture(nil, "ARTWORK")
+		button.underline:SetColorTexture(ACCENT[1], ACCENT[2], ACCENT[3], 0.9)
+		button.underline:SetHeight(2)
+		button.underline:SetPoint("TOPLEFT", button.text, "BOTTOMLEFT", -2, -2)
+		button.underline:SetPoint("TOPRIGHT", button.text, "BOTTOMRIGHT", 2, -2)
+		button:RegisterForClicks("LeftButtonUp")
+		button:SetScript("OnClick", function()
+			SelectLootSubview(id)
+		end)
+		lootWidgets.subButtons[id] = button
+		x = x + button:GetWidth() + 10
+	end
+	AddSubButton("looted", "Looted")
+	AddSubButton("gathered", "Gathered")
+	AddSubButton("crafted", "Crafted")
+
+	local looted = CreateFrame("Frame", nil, page)
+	looted:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -26)
+	looted:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
+	lootWidgets.lootedFrame = looted
+	BuildLootContent(looted)
+
+	local gathered = CreateFrame("Frame", nil, page)
+	gathered:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -26)
+	gathered:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
+	gathered:Hide()
+	lootWidgets.gatheredFrame = gathered
+	if BuildLootGathered then
+		BuildLootGathered(gathered)
+	end
+
+	local crafted = CreateFrame("Frame", nil, page)
+	crafted:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -26)
+	crafted:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
+	crafted:Hide()
+	lootWidgets.craftedFrame = crafted
+	if BuildLootCrafted then
+		BuildLootCrafted(crafted)
+	end
+
+	SelectLootSubview("looted")
+	pageRefresh.loot = RefreshLootPage
 end
 
 -- Handed to the shell, which builds and refreshes every tab.
 ns.BuildLootPage, ns.RefreshLoot = BuildLootPage, RefreshLoot
+ns.RefreshLootPage = RefreshLootPage

@@ -214,8 +214,11 @@ local function RefreshTotalChart()
 	end
 	-- While the levelling sub-view is hidden the plot has no real size; a
 	-- draw now would cache degenerate geometry under the current signature.
+	-- The plot itself may be hidden because the previous refresh found
+	-- nothing to draw; that must not stop the next refresh, which shows it
+	-- again once there is a line.
 	local levelsFrame = totalWidgets.levelsFrame
-	if (levelsFrame and not levelsFrame:IsShown()) or not totalWidgets.plot:IsShown() then
+	if levelsFrame and not levelsFrame:IsShown() then
 		totalWidgets.chartSignature = nil
 		return
 	end

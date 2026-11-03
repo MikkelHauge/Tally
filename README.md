@@ -6,14 +6,14 @@ It records a LOT of things (a few things are not tested, and a lot of  things ar
 
 What is tracked:
 
-- **Character** - overview, milestones, timeline, and a Social view (group
-  time, guild history, chat by channel, whispers, trades, mail, duels, and the
-  races/classes met).
+- **Character** - overview, professions by level, milestones, timeline, and a
+  Social view (group time, guild history, chat by channel, whispers, trades,
+  mail, duels, and the races/classes met).
 - **Playtime** - sessions, level-ups, `/played` sync, alive/afk time.
 - **Economy** - balance history, income/expense ledger, trades, auction
-  activity and professions.
+  activity, professions, and Merchant's Favor on Forever.
 - **Combat** - fights, kills, deaths, buffs and debuffs.
-- **Loot** - items, quality, value and best finds.
+- **Loot** - looted, gathered and crafted items, quality, value and best finds.
 - **Explore** - zones, dungeons, distance, flights and mounted time.
 - **Total** - per-character and combined figures, records, logs and graphs.
 

@@ -5,10 +5,12 @@ local addonName, ns = ...
 
 local ACCENT, pageRefresh, BuildOverviewPage, RefreshOverview,
 	BuildMilestonesPage, RefreshMilestones, BuildTimelinePage, RefreshTimeline,
-	BuildSocialPage, RefreshSocial =
+	BuildSocialPage, RefreshSocial,
+	BuildCharacterProfessions, RefreshCharacterProfessions =
 	ns.ACCENT, ns.pageRefresh, ns.BuildOverviewPage, ns.RefreshOverview,
 	ns.BuildMilestonesPage, ns.RefreshMilestones, ns.BuildTimelinePage, ns.RefreshTimeline,
-	ns.BuildSocialPage, ns.RefreshSocial
+	ns.BuildSocialPage, ns.RefreshSocial,
+	ns.BuildCharacterProfessions, ns.RefreshCharacterProfessions
 
 local characterWidgets = { subview = "overview" }
 
@@ -18,6 +20,8 @@ local function RefreshCharacter()
 	end
 	if characterWidgets.subview == "milestones" then
 		RefreshMilestones()
+	elseif characterWidgets.subview == "professions" then
+		RefreshCharacterProfessions()
 	elseif characterWidgets.subview == "timeline" then
 		RefreshTimeline()
 	elseif characterWidgets.subview == "social" then
@@ -34,6 +38,9 @@ local function SelectCharacterSubview(name)
 	end
 	if characterWidgets.milestonesFrame then
 		characterWidgets.milestonesFrame:SetShown(name == "milestones")
+	end
+	if characterWidgets.professionsFrame then
+		characterWidgets.professionsFrame:SetShown(name == "professions")
 	end
 	if characterWidgets.timelineFrame then
 		characterWidgets.timelineFrame:SetShown(name == "timeline")
@@ -74,6 +81,7 @@ local function BuildCharacterPage(page)
 		x = x + button:GetWidth() + 10
 	end
 	AddSubButton("overview", "Overview")
+	AddSubButton("professions", "Professions")
 	AddSubButton("milestones", "Milestones")
 	AddSubButton("timeline", "Timeline")
 	AddSubButton("social", "Social")
@@ -83,6 +91,13 @@ local function BuildCharacterPage(page)
 	overview:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
 	characterWidgets.overviewFrame = overview
 	BuildOverviewPage(overview)
+
+	local professions = CreateFrame("Frame", nil, page)
+	professions:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -26)
+	professions:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
+	professions:Hide()
+	characterWidgets.professionsFrame = professions
+	BuildCharacterProfessions(professions)
 
 	local milestones = CreateFrame("Frame", nil, page)
 	milestones:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -26)

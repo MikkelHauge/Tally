@@ -28,8 +28,8 @@ local function BuildEconomySecondary(page)
 	local card = CreateListCard(page, 0, -4, 730, 434, "Secondary professions")
 	economyWidgets.secondaryCard = card
 	AddCardTitleNote(card, "Secondary professions",
-		"Cooking, Fishing and First Aid, in that order, for the character being shown. Ranks are read at login; recipes and cooldowns are read while the profession's window is open. Archaeology is not tracked.")
-	ns.professionsUI.AttachRecipeCard(card, economyWidgets, "secondaryScrollOffset", RefreshEconomySecondary)
+		"Cooking, Fishing and First Aid, with recipes, ranks and cooldowns. Ranks are read at login; recipes and cooldowns are read while the profession's window is open. The skill gained per level for every profession lives on the Character tab's Professions view. Archaeology is not tracked.")
+	ns.professionsUI.AttachRecipeCard(card, economyWidgets, "secondaryScrollOffset", RefreshEconomySecondary, true)
 	RefreshEconomySecondary()
 end
 

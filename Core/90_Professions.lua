@@ -12,6 +12,49 @@ local Now = ns.Now
 local SECONDARY_PROFESSIONS = { "Cooking", "Fishing", "First Aid" }
 local SECONDARY_ORDER = { Cooking = 1, Fishing = 2, ["First Aid"] = 3 }
 local IGNORED_PROFESSIONS = { Archaeology = true }
+-- These are the profession skill lines Classic's fallback is allowed to read.
+-- Weapons and languages are deliberately absent, so they can never become a
+-- profession; the list is the matrix the UI shows.
+local SKILL_LINE_PROFESSIONS = {
+	Cooking = true, Fishing = true, ["First Aid"] = true,
+	Mining = true, Herbalism = true, Skinning = true,
+}
+
+-- Retail keeps the old-world profession lines beside the modern ones and
+-- calls them "Classic Cooking" and so on. Tally's cards know the plain names,
+-- so map the aliases before a reading is stored. On Classic these names never
+-- appear and the map is unused.
+local PROFESSION_ALIASES = {
+	["Classic Alchemy"] = "Alchemy",
+	["Classic Blacksmithing"] = "Blacksmithing",
+	["Classic Cooking"] = "Cooking",
+	["Classic Enchanting"] = "Enchanting",
+	["Classic Engineering"] = "Engineering",
+	["Classic Fishing"] = "Fishing",
+	["Classic Herbalism"] = "Herbalism",
+	["Classic Inscription"] = "Inscription",
+	["Classic Jewelcrafting"] = "Jewelcrafting",
+	["Classic Leatherworking"] = "Leatherworking",
+	["Classic Mining"] = "Mining",
+	["Classic Skinning"] = "Skinning",
+	["Classic Tailoring"] = "Tailoring",
+}
+local aliasTraced = {}
+
+local function CanonicalProfessionName(name)
+	if type(name) ~= "string" then
+		return name
+	end
+	local canonical = PROFESSION_ALIASES[name]
+	if canonical then
+		if not aliasTraced[name] and ns.Trace then
+			aliasTraced[name] = true
+			ns.Trace("profession alias: "..name.." -> "..canonical)
+		end
+		return canonical
+	end
+	return name
+end
 
 local function IsSecondary(name)
 	return SECONDARY_ORDER[name] ~= nil
@@ -82,6 +125,9 @@ local function EnsureProfessions(char)
 	end
 	if type(store.learned) ~= "table" then
 		store.learned = {}
+	end
+	if type(store.byLevel) ~= "table" then
+		store.byLevel = {}
 	end
 	if type(store.crafts) ~= "table" then
 		store.crafts = {}
@@ -247,17 +293,49 @@ function ns.SetProfessionCooldown(profession, name, recipeID, readyAt, span, ite
 	end
 end
 
+-- One live skill-up, credited to the character level it happened at. The
+-- login snapshot and the first-ever reading never reach here, so a character
+-- met at rank 300 does not appear to have gained it at level 12.
+local function NoteSkillGain(char, store, name, gained, at)
+	gained = tonumber(gained) or 0
+	if gained <= 0 or not name then
+		return
+	end
+	local level = 0
+	if type(UnitLevel) == "function" then
+		local ok, value = pcall(UnitLevel, "player")
+		level = ok and (tonumber(value) or 0) or 0
+	end
+	if level <= 0 then
+		level = tonumber(char and char.level) or 0
+	end
+	if level <= 0 then
+		return
+	end
+	if type(store.byLevel) ~= "table" then
+		store.byLevel = {}
+	end
+	local row = store.byLevel[level]
+	if type(row) ~= "table" then
+		row = {}
+		store.byLevel[level] = row
+	end
+	row[name] = (tonumber(row[name]) or 0) + gained
+	ns.Trace("profession skill: "..name.." +"..gained.." at level "..level)
+end
+
 -- Writes one profession reading into the skill list. The window scans and the
 -- Classic skill-line fallback both use it, because Classic has no
 -- GetProfessions/GetProfessionInfo. Existing first-seen stamps are kept; only
 -- the rank moves.
-local function RecordSkillReading(char, name, rank, maxRank, evidence)
+local function RecordSkillReading(char, name, rank, maxRank, evidence, observed)
 	if not char or not ns.Tracks("economy") then
 		return false
 	end
 	if type(name) ~= "string" or name == "" then
 		return false
 	end
+	name = CanonicalProfessionName(name)
 	if type(rank) ~= "number" or type(maxRank) ~= "number" or maxRank <= 0 then
 		return false
 	end
@@ -268,13 +346,26 @@ local function RecordSkillReading(char, name, rank, maxRank, evidence)
 	local at = Now()
 	local found
 	for index = 1, #store.skills do
-		if store.skills[index].name == name then
+		if CanonicalProfessionName(store.skills[index].name) == name then
 			found = store.skills[index]
 			break
 		end
 	end
 	if found then
 		found.lastSeenAt = at
+		if observed ~= "login" and type(found.rank) == "number" and rank < found.rank then
+			-- A stale or alternate source must not lower a live rank. Retail
+			-- reports the modern Cooking line (often rank 1) next to the
+			-- classic line; the higher classic rank is the one being played.
+			-- The login snapshot still resynchronises a genuinely lower rank.
+			rank = found.rank
+			if (tonumber(found.maxRank) or 0) > maxRank then
+				maxRank = found.maxRank
+			end
+		end
+		if observed ~= "login" and type(found.rank) == "number" and rank > found.rank then
+			NoteSkillGain(char, store, name, rank - found.rank, at)
+		end
 		if found.rank ~= rank or found.maxRank ~= maxRank then
 			found.rank = rank
 			found.maxRank = maxRank
@@ -315,16 +406,77 @@ local function RecordSkillReading(char, name, rank, maxRank, evidence)
 	return true
 end
 
+-- Reads the rank from the open profession window. Classic reports it only
+-- there, and a craft can raise the rank while the window stays open; the
+-- CHAT_MSG_SKILL path is not guaranteed to fire on every client.
+local rankRefreshPending = false
+local rankRefreshProfession
+
+local function ReadOpenRank(char, expected)
+	if not char or not ns.Tracks("economy") then
+		return false
+	end
+	local name, rank, maxRank
+	if type(GetTradeSkillLine) == "function" then
+		local ok, named, current, maximum = pcall(GetTradeSkillLine)
+		if ok and type(named) == "string" and named ~= "UNKNOWN"
+			and type(current) == "number" and type(maximum) == "number" and maximum > 0 then
+			name, rank, maxRank = named, current, maximum
+		end
+	end
+	if not name and type(GetCraftDisplaySkillLine) == "function" then
+		local ok, named, current, maximum = pcall(GetCraftDisplaySkillLine)
+		if ok and type(named) == "string" and named ~= "UNKNOWN"
+			and type(current) == "number" and type(maximum) == "number" and maximum > 0 then
+			name, rank, maxRank = named, current, maximum
+		end
+	end
+	if not name then
+		return false
+	end
+	if expected then
+		local got = CanonicalProfessionName(name)
+		local want = CanonicalProfessionName(expected)
+		if got ~= want then
+			return false
+		end
+	end
+	return RecordSkillReading(char, name, rank, maxRank, "open_window_rank", "live")
+end
+
+-- The craft event can arrive before the window has refreshed its rank, so
+-- read once now and once just after. A single delayed read serves a burst of
+-- crafts, and reading the same rank twice changes nothing.
+local function ScheduleOpenRank(char, profession)
+	ReadOpenRank(char, profession)
+	rankRefreshProfession = profession
+	if rankRefreshPending then
+		return
+	end
+	rankRefreshPending = true
+	local function Refresh()
+		rankRefreshPending = false
+		if ns.GetChar() == char then
+			ReadOpenRank(char, rankRefreshProfession)
+		end
+	end
+	if type(C_Timer) == "table" and type(C_Timer.After) == "function" then
+		C_Timer.After(0.5, Refresh)
+	else
+		Refresh()
+	end
+end
+
 -- Classic's skill lines carry the same name/rank/max-rank as the modern
 -- profession list, but they also list weapons and languages. Only names
 -- Tally already learned from a profession window are accepted, so a weapon
 -- skill can never appear as a profession. On clients with GetProfessions this
 -- is never used.
-local function SnapshotSkillLines(char)
+local function SnapshotSkillLines(char, observed)
 	if not char or type(GetNumSkillLines) ~= "function" or type(GetSkillLineInfo) ~= "function" then
 		return 0
 	end
-	local store = char.professions
+	local store = EnsureProfessions(char)
 	if type(store) ~= "table" then
 		return 0
 	end
@@ -344,6 +496,9 @@ local function SnapshotSkillLines(char)
 	for name in pairs(store.learned or {}) do
 		known[name] = true
 	end
+	for name in pairs(SKILL_LINE_PROFESSIONS) do
+		known[name] = true
+	end
 	if next(known) == nil then
 		return 0
 	end
@@ -354,8 +509,9 @@ local function SnapshotSkillLines(char)
 	local updated = 0
 	for index = 1, count do
 		local okLine, name, isHeader, _, rank, _, _, maxRank = pcall(GetSkillLineInfo, index)
-		if okLine and name and not isHeader and known[name] then
-			if RecordSkillReading(char, name, rank, maxRank, "skill_line") then
+		local canonical = CanonicalProfessionName(name)
+		if okLine and canonical and not isHeader and known[canonical] then
+			if RecordSkillReading(char, canonical, rank, maxRank, "skill_line", observed) then
 				updated = updated + 1
 			end
 		end
@@ -376,7 +532,7 @@ local function SnapshotProfessions(char, observed)
 		-- Classic: the profession list is read from the skill lines instead.
 		-- Only professions already met from a window are updated, so the
 		-- weapon and language lines stay out of the profession cards.
-		local updated = SnapshotSkillLines(char)
+		local updated = SnapshotSkillLines(char, observed)
 		ns.Trace("professions: no GetProfessions/GetProfessionInfo; skill lines updated "..updated)
 		return
 	end
@@ -387,6 +543,7 @@ local function SnapshotProfessions(char, observed)
 			local profIndex = profs[index]
 			if profIndex and profIndex > 0 then
 				local name, _, rank, maxRank = GetProfessionInfo(profIndex)
+				name = CanonicalProfessionName(name)
 				if name then
 					found[#found + 1] = {
 						name = name,
@@ -424,6 +581,19 @@ local function SnapshotProfessions(char, observed)
 			local skill = skills[index]
 			local at = skill.at or Now()
 			local old = oldByName[skill.name]
+			if observed ~= "login" and old and type(old.rank) == "number" and skill.rank < old.rank then
+				-- Retail reports the modern Cooking line next to the classic
+				-- one. A lower modern rank must not replace the classic rank
+				-- the character is actually raising; the login snapshot still
+				-- resynchronises a genuinely lower rank.
+				skill.rank = old.rank
+				if (tonumber(old.maxRank) or 0) > skill.maxRank then
+					skill.maxRank = old.maxRank
+				end
+			end
+			if observed ~= "login" and old and type(old.rank) == "number" and skill.rank > old.rank then
+				NoteSkillGain(char, store, skill.name, skill.rank - old.rank, at)
+			end
 			skill.firstAt = old and old.firstAt or at
 			skill.lastSeenAt = at
 			local oldObserved = old and old.observed or nil
@@ -516,12 +686,18 @@ local function SnapshotProfessions(char, observed)
 			end
 		end
 	end
+	-- Retail's GetProfessions list does not include the old-world
+	-- "Classic Cooking" style lines. Read the skill lines as well; at login
+	-- this syncs their ranks silently, and on a live skill-up it records the
+	-- gain under the plain profession name.
+	local updatedLines = SnapshotSkillLines(char, observed)
 	local parts = {}
 	for index = 1, #skills do
 		local skill = skills[index]
 		parts[#parts + 1] = skill.name.." "..skill.rank.."/"..skill.maxRank
 	end
-	ns.Trace("professions: "..(#parts > 0 and table.concat(parts, " · ") or "none recorded"))
+	ns.Trace("professions: "..(#parts > 0 and table.concat(parts, " · ") or "none recorded")
+		.."; skill lines updated "..updatedLines)
 end
 
 -- Quality the client holds for an item id, or nil when it has not been seen
@@ -1598,6 +1774,7 @@ local function CountCraft(spellID)
 		credits.chat = credits.chat + 1
 	end
 	PruneCraftTally(char)
+	ScheduleOpenRank(char, profession)
 	if ns.NoteRecentEvent then
 		ns.NoteRecentEvent("craft", {
 			at = at, zone = ns.CurrentZone and ns.CurrentZone() or nil,
@@ -1672,6 +1849,7 @@ local function CountNamedCraft(profession, name, itemID, quantity)
 		ns.Touch(char, "professions.crafts."..profession, at)
 	end
 	PruneCraftTally(char)
+	ScheduleOpenRank(char, profession)
 	if ns.NoteRecentEvent then
 		ns.NoteRecentEvent("craft", {
 			at = at, zone = ns.CurrentZone and ns.CurrentZone() or nil,
@@ -1906,7 +2084,49 @@ local function HandleProfessionEvent(event, ...)
 		-- rank). No recipe scan runs here: expanding the whole tree during
 		-- crafting would reorder the list under the player's clicks, so
 		-- recipe names are read when a window opens.
-		SnapshotProfessions(ns.GetChar())
+		local char = ns.GetChar()
+		-- The chat line names the profession and the new rank. Reading it
+		-- first catches clients whose profession list lags or omits the line,
+		-- such as a secondary profession on a custom client. The live
+		-- no-downgrade rule keeps a stale snapshot from undoing the gain.
+		local text = ...
+		if char and type(text) == "string" then
+			local plain = string.gsub(text, "|c%x%x%x%x%x%x%x%x", "")
+			plain = string.gsub(plain, "|r", "")
+			local name, rank = string.match(plain, "^Your skill in (.-) has increased to (%d+)")
+			rank = tonumber(rank)
+			if name and rank then
+				local store = char.professions
+				if type(store) == "table" then
+					for index = 1, #store.skills do
+						local skill = store.skills[index]
+						if CanonicalProfessionName(skill.name) == CanonicalProfessionName(name)
+							and (tonumber(skill.maxRank) or 0) > 0 then
+							if rank > (tonumber(skill.rank) or 0) then
+								RecordSkillReading(char, name, rank, skill.maxRank, "chat_skill", "live")
+							end
+							break
+						end
+					end
+				end
+			end
+		end
+		SnapshotProfessions(char)
+		-- Some clients deliver the chat line a moment before the profession
+		-- list shows the new rank. A second read half a second later catches
+		-- that case without ever counting the same rank twice.
+		if type(C_Timer) == "table" and type(C_Timer.After) == "function" then
+			C_Timer.After(0.5, function()
+				if char and ns.GetChar() == char then
+					SnapshotProfessions(char)
+				end
+			end)
+		end
+		-- The Character tab's Professions view is open on this data, so let it
+		-- redraw at once rather than waiting for the next ticker step.
+		if ns.OnDataTick then
+			ns.OnDataTick()
+		end
 	elseif event == "TRADE_SKILL_SHOW" then
 		tradeSkillOpen = true
 		-- Drops the previous window's recipe list: until this window is
@@ -1926,6 +2146,12 @@ local function HandleProfessionEvent(event, ...)
 			tradeSkillOpen = true
 			windowRecipes = {}
 			windowRecipeIDs = {}
+		end
+		if tradeSkillOpen then
+			local char = ns.GetChar()
+			if char then
+				ReadOpenRank(char)
+			end
 		end
 		if tradeSkillOpen and (HasModernRecipeRead() or next(windowRecipes) == nil) then
 			ScheduleRecipeScan(0.5)
@@ -2076,6 +2302,19 @@ function ns.MostCraftedFor(char, profession)
 end
 
 ns.SnapshotProfessions = SnapshotProfessions
+
+-- Retail can raise a skill-line change without a usable CHAT_MSG_SKILL for
+-- the old-world "Classic Cooking" style lines. Snapshot on the event where
+-- the client offers it; ns.On drops an unknown event safely on older clients.
+ns.On("SKILL_LINES_CHANGED", function()
+	local char = ns.GetChar()
+	if char and ns.Tracks("economy") then
+		SnapshotProfessions(char)
+		if ns.OnDataTick then
+			ns.OnDataTick()
+		end
+	end
+end, "Professions")
 ns.HasModernRecipeRead = HasModernRecipeRead
 ns.ScheduleRecipeScan = ScheduleRecipeScan
 ns.SpellName = SpellName
@@ -2107,6 +2346,7 @@ ns.ProfessionSecondary = SECONDARY_PROFESSIONS
 ns.ProfessionIsSecondary = IsSecondary
 ns.ProfessionIsIgnored = IsIgnored
 ns.ProfessionSecondaryOrder = SecondaryOrder
+ns.ProfessionCanonicalName = CanonicalProfessionName
 ns.professions.Secondary = ns.ProfessionSecondary
 ns.professions.IsSecondary = ns.ProfessionIsSecondary
 ns.professions.IsIgnored = ns.ProfessionIsIgnored

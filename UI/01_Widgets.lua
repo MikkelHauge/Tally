@@ -463,6 +463,9 @@ local function EnsureRowLine(card, index, tall)
 	local step = card.rowStep or (tallRows and TALL_ROW_STEP or ROW_STEP)
 	local midRight = card.rowMidRight or ROW_MID_RIGHT
 	local mid2Right = card.rowMid2Right
+	local mid3Right = card.rowMid3Right
+	local mid4Right = card.rowMid4Right
+	local mid5Right = card.rowMid5Right
 	local row = rows[index]
 	if not row then
 		row = CreateFrame("Frame", nil, card)
@@ -481,6 +484,21 @@ local function EnsureRowLine(card, index, tall)
 		if mid2Right then
 			row.mid2 = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
 			row.mid2:SetJustifyH("RIGHT")
+		end
+		-- Further right-aligned columns for the profession level table. Each
+		-- exists only where the card asked for it, so every other list keeps
+		-- its old layout.
+		if mid3Right then
+			row.mid3 = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+			row.mid3:SetJustifyH("RIGHT")
+		end
+		if mid4Right then
+			row.mid4 = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+			row.mid4:SetJustifyH("RIGHT")
+		end
+		if mid5Right then
+			row.mid5 = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+			row.mid5:SetJustifyH("RIGHT")
 		end
 		-- The cooldown bar: a track across the row with a fill whose width
 		-- is reset every frame while a wait runs down (CooldownBarTick).
@@ -502,6 +520,15 @@ local function EnsureRowLine(card, index, tall)
 			if row.mid2 then
 				row.mid2:SetPoint("TOPRIGHT", -mid2Right, 0)
 			end
+			if row.mid3 then
+				row.mid3:SetPoint("TOPRIGHT", -mid3Right, 0)
+			end
+			if row.mid4 then
+				row.mid4:SetPoint("TOPRIGHT", -mid4Right, 0)
+			end
+			if row.mid5 then
+				row.mid5:SetPoint("TOPRIGHT", -mid5Right, 0)
+			end
 			row.detail = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
 			row.detail:SetPoint("TOPLEFT", 0, -14)
 			row.detail:SetJustifyH("LEFT")
@@ -521,6 +548,15 @@ local function EnsureRowLine(card, index, tall)
 			row.mid:SetPoint("RIGHT", -midRight, 0)
 			if row.mid2 then
 				row.mid2:SetPoint("RIGHT", -mid2Right, 0)
+			end
+			if row.mid3 then
+				row.mid3:SetPoint("RIGHT", -mid3Right, 0)
+			end
+			if row.mid4 then
+				row.mid4:SetPoint("RIGHT", -mid4Right, 0)
+			end
+			if row.mid5 then
+				row.mid5:SetPoint("RIGHT", -mid5Right, 0)
 			end
 			-- Short rows also carry a divider texture, hidden until a
 			-- divider entry in FillCardRows asks for it.
@@ -629,6 +665,18 @@ local function FillCardRows(card, entries, leftMax, tall)
 			if row.mid2 then
 				row.mid2:SetText("")
 			end
+			if row.mid3 then
+				row.mid3:SetText("")
+				row.mid3:Hide()
+			end
+			if row.mid4 then
+				row.mid4:SetText("")
+				row.mid4:Hide()
+			end
+			if row.mid5 then
+				row.mid5:SetText("")
+				row.mid5:Hide()
+			end
 			row.tip = nil
 			row.click = nil
 			row.barData = nil
@@ -651,6 +699,21 @@ local function FillCardRows(card, entries, leftMax, tall)
 			if row.mid2 then
 				row.mid2:SetText(entry.mid2 or "")
 				SetRowColor(row.mid2, entry.mid2Color or ROW_DIM)
+			end
+			if row.mid3 then
+				row.mid3:SetText(entry.mid3 or "")
+				row.mid3:SetShown(entry.mid3 ~= nil)
+				SetRowColor(row.mid3, entry.mid3Color or ROW_DIM)
+			end
+			if row.mid4 then
+				row.mid4:SetText(entry.mid4 or "")
+				row.mid4:SetShown(entry.mid4 ~= nil)
+				SetRowColor(row.mid4, entry.mid4Color or ROW_DIM)
+			end
+			if row.mid5 then
+				row.mid5:SetText(entry.mid5 or "")
+				row.mid5:SetShown(entry.mid5 ~= nil)
+				SetRowColor(row.mid5, entry.mid5Color or ROW_DIM)
 			end
 			row.right:SetText(entry.right or "")
 			SetRowColor(row.right, entry.rightColor or VALUE_COLOR)
@@ -681,6 +744,18 @@ local function FillCardRows(card, entries, leftMax, tall)
 		row.right:SetText("")
 		if row.mid2 then
 			row.mid2:SetText("")
+		end
+		if row.mid3 then
+			row.mid3:SetText("")
+			row.mid3:Hide()
+		end
+		if row.mid4 then
+			row.mid4:SetText("")
+			row.mid4:Hide()
+		end
+		if row.mid5 then
+			row.mid5:SetText("")
+			row.mid5:Hide()
 		end
 		row.tip = nil
 		row.click = nil

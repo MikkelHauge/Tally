@@ -6,8 +6,8 @@
 -- one.
 local addonName, ns = ...
 
-local ACCENT, economyWidgets, BuildEconomyLedger, RefreshEconomyLedger, BuildEconomyProfessions, RefreshEconomyProfessions, BuildEconomySecondary, RefreshEconomySecondary, pageRefresh =
-	ns.ACCENT, ns.economyWidgets, ns.BuildEconomyLedger, ns.RefreshEconomyLedger, ns.BuildEconomyProfessions, ns.RefreshEconomyProfessions, ns.BuildEconomySecondary, ns.RefreshEconomySecondary, ns.pageRefresh
+local ACCENT, economyWidgets, BuildEconomyLedger, RefreshEconomyLedger, BuildEconomyProfessions, RefreshEconomyProfessions, BuildEconomySecondary, RefreshEconomySecondary, BuildEconomyFavor, RefreshEconomyFavor, pageRefresh =
+	ns.ACCENT, ns.economyWidgets, ns.BuildEconomyLedger, ns.RefreshEconomyLedger, ns.BuildEconomyProfessions, ns.RefreshEconomyProfessions, ns.BuildEconomySecondary, ns.RefreshEconomySecondary, ns.BuildEconomyFavor, ns.RefreshEconomyFavor, ns.pageRefresh
 
 -- The economy page's sub-views: "ledger", "professions", "secondary" and
 -- "auction" (economyWidgets.subview). SelectEconomySubview sets which is
@@ -20,6 +20,8 @@ local function RefreshEconomy()
 		RefreshEconomyProfessions()
 	elseif economyWidgets.subview == "secondary" then
 		RefreshEconomySecondary()
+	elseif economyWidgets.subview == "favor" then
+		RefreshEconomyFavor()
 	elseif economyWidgets.subview == "auction" then
 		ns.RefreshAuctionView(economyWidgets.auctionStore)
 	else
@@ -50,6 +52,9 @@ local function SelectEconomySubview(name)
 	if economyWidgets.secondaryFrame then
 		economyWidgets.secondaryFrame:SetShown(name == "secondary")
 	end
+	if economyWidgets.favorFrame then
+		economyWidgets.favorFrame:SetShown(name == "favor")
+	end
 	if economyWidgets.auctionFrame then
 		economyWidgets.auctionFrame:SetShown(name == "auction")
 	end
@@ -63,6 +68,9 @@ local function SelectEconomySubview(name)
 	end
 	if name ~= "secondary" then
 		ClearCardHover(economyWidgets.secondaryCard)
+	end
+	if name ~= "favor" then
+		ClearCardHover(economyWidgets.favorCard)
 	end
 	local buttons = economyWidgets.subButtons or {}
 	for id, button in pairs(buttons) do
@@ -98,6 +106,10 @@ local function BuildEconomyPage(page)
 		x = x + button:GetWidth() + 10
 	end
 	AddSubButton("ledger", "Ledger")
+	local hasFavor = ns.MerchantsFavorAvailable and ns.MerchantsFavorAvailable()
+	if hasFavor then
+		AddSubButton("favor", "Merchant's Favor")
+	end
 	AddSubButton("professions", "Professions")
 	AddSubButton("secondary", "Secondary")
 	AddSubButton("auction", "Auctions")
@@ -107,6 +119,15 @@ local function BuildEconomyPage(page)
 	ledger:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
 	economyWidgets.ledgerFrame = ledger
 	BuildEconomyLedger(ledger)
+
+	if hasFavor then
+		local favor = CreateFrame("Frame", nil, page)
+		favor:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -26)
+		favor:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
+		favor:Hide()
+		economyWidgets.favorFrame = favor
+		BuildEconomyFavor(favor)
+	end
 
 	-- The professions sub-view: four tiles above two primary cards. The
 	-- fourth tile opens the cooldown notification options.

@@ -1,21 +1,21 @@
 -- Tally - the Total tab's economy graph: the daily balance of the character
 -- selected in the viewer.
 --
--- One line: the selected character's end-of-day balance over the chosen
--- window. The corner shows that character's balance and daily average.
+-- One line per ticked character: each day's end-of-day balance over the chosen
+-- window. The corner shows the combined balance and daily average.
 local addonName, ns = ...
 
-local ACCENT, ClassColorCode, CharColor, DisplayChar, CreateListCard, SetCornerLabel, CreateCornerButton, AddCardTitleNote, CanRotate, ColorMarkup, economyWidgets, GraphDaysLabel, NextGraphDays, MONTH_COLORS =
-	ns.ACCENT, ns.ClassColorCode, ns.CharColor, ns.DisplayChar, ns.CreateListCard, ns.SetCornerLabel, ns.CreateCornerButton, ns.AddCardTitleNote, ns.CanRotate, ns.ColorMarkup, ns.economyWidgets, ns.GraphDaysLabel, ns.NextGraphDays, ns.MONTH_COLORS
+local ACCENT, TILE_BACKDROP, ClassColorCode, CharColor, DisplayChar, CreateListCard, SetCornerLabel, CreateCornerButton, AddCardTitleNote, CanRotate, ColorMarkup, economyWidgets, MONTH_COLORS, GRAPH_DAYS_MAX, GRAPH_DAYS_DEFAULT =
+	ns.ACCENT, ns.TILE_BACKDROP, ns.ClassColorCode, ns.CharColor, ns.DisplayChar, ns.CreateListCard, ns.SetCornerLabel, ns.CreateCornerButton, ns.AddCardTitleNote, ns.CanRotate, ns.ColorMarkup, ns.economyWidgets, ns.MONTH_COLORS, ns.GRAPH_DAYS_MAX, ns.GRAPH_DAYS_DEFAULT
 
 -------------------------------------------------------------------------------
 -- Daily balance graph (Total, ECONOMY GRAPH sub-view)
 -------------------------------------------------------------------------------
 
--- The selected character's end-of-day balance over the last
--- economyWidgets.graphDays days. Points come from ns.GoldTracks, which walks
--- the daily ledger back from the last known balance. The days button in the
--- corner walks the window.
+-- The selected character's end-of-day balance over the window chosen by the
+-- sliders under the graph: how many days to draw and how far back it ends.
+-- Points come from ns.GoldTracks, which walks the daily ledger back from the
+-- last known balance.
 
 local function DailySegment(index)
 	local segment = economyWidgets.segments[index]
@@ -169,7 +169,11 @@ local function RefreshEconomyGraph()
 	-- shows that day's table, so it must match the lines currently drawn.
 	local graph = economyWidgets.graph
 
-	local data = ns.GoldTracks(economyWidgets.graphDays or 14)
+	local windowDays = economyWidgets.graphWindowDays or GRAPH_DAYS_DEFAULT
+	local backDays = economyWidgets.graphBackDays or 0
+	windowDays = math.max(1, math.min(GRAPH_DAYS_MAX, math.floor(windowDays + 0.5)))
+	backDays = math.max(0, math.min(GRAPH_DAYS_MAX - windowDays + 1, math.floor(backDays + 0.5)))
+	local data = ns.GoldTracks(windowDays, backDays)
 
 	-- Every character ticked in the Total picker, the same selection the
 	-- levelling graph and the combined figures use.
@@ -189,7 +193,16 @@ local function RefreshEconomyGraph()
 	economyWidgets.graphShown = shown
 	economyWidgets.graphSelected = shown[1]
 	local function CardLabel()
-		return "Economy graph - last "..(economyWidgets.graphDays or 14).." days"
+		local days = #(data.days or {})
+		local newest = days > 0 and data.days[days] or nil
+		if not newest then
+			return "Economy graph"
+		end
+		local span = days == 1 and " day" or " days"
+		if backDays == 0 then
+			return "Economy graph - last "..days..span
+		end
+		return "Economy graph - "..days..span.." ending "..ns.FormatDate(newest.stamp)
 	end
 	local function CardNotes()
 		if combinedMode and #shown > 1 then
@@ -241,9 +254,6 @@ local function RefreshEconomyGraph()
 		end
 	end
 	economyWidgets.graphTotalData = data
-	if economyWidgets.graphDaysButton then
-		SetCornerLabel(economyWidgets.graphDaysButton, GraphDaysLabel(economyWidgets.graphDays or 14))
-	end
 	if economyWidgets.graphCombinedButton then
 		SetCornerLabel(economyWidgets.graphCombinedButton, combinedMode and "combined" or "separate")
 	end
@@ -266,8 +276,24 @@ local function RefreshEconomyGraph()
 	-- on the axes without moving a single balance, and that has to redraw.
 	local signature = #drawn * 1000003
 	signature = signature + (combinedMode and 7654321 or 0)
-	signature = signature + (economyWidgets.graphDays or 14) * 611953
+	signature = signature + windowDays * 611953
+	signature = signature + backDays * 1498307
 	signature = signature + #(data.days or {}) * 15485863
+	-- The window can shift by a day at midnight without changing its length.
+	-- The first and last date keys are part of the signature so the labels
+	-- move with it.
+	local oldestDay = data.days and data.days[1]
+	local newestDay = data.days and data.days[#data.days]
+	if oldestDay then
+		for position = 1, #oldestDay.key do
+			signature = signature + string.byte(oldestDay.key, position) * (position + 3)
+		end
+	end
+	if newestDay then
+		for position = 1, #newestDay.key do
+			signature = signature + string.byte(newestDay.key, position) * (position + 7)
+		end
+	end
 	-- The selected characters themselves are part of it: swapping one for
 	-- another with identical totals must still refresh the names and hover.
 	for index = 1, #shown do
@@ -385,17 +411,6 @@ local function RefreshEconomyGraph()
 	local stepW = (daysShown > 1) and (drawW / (daysShown - 1)) or drawW
 	local previousMonth
 	for slot = 1, daysShown do
-		local guide = graph.vgrid[slot]
-		if not guide then
-			guide = plot:CreateTexture(nil, "BACKGROUND")
-			guide:SetColorTexture(1, 1, 1, 0.045)
-			guide:SetWidth(1)
-			graph.vgrid[slot] = guide
-		end
-		guide:SetPoint("BOTTOMLEFT", plot, "BOTTOMLEFT", xs[slot], floorY)
-		guide:SetHeight(drawH)
-		guide:Show()
-
 		local key = data.days[slot].key
 		local month = string.sub(key, 6, 7)
 		local day = string.sub(key, 9, 10)
@@ -405,6 +420,19 @@ local function RefreshEconomyGraph()
 		local color = MONTH_COLORS[((tonumber(month) or 1) - 1) % #MONTH_COLORS + 1]
 		local monthStart = (day == "01") or (slot == 1) or (previousMonth ~= month)
 		previousMonth = month
+
+		local guide = graph.vgrid[slot]
+		if not guide then
+			guide = plot:CreateTexture(nil, "BACKGROUND")
+			guide:SetColorTexture(1, 1, 1, 0.045)
+			guide:SetWidth(1)
+			graph.vgrid[slot] = guide
+		end
+		guide:SetPoint("BOTTOMLEFT", plot, "BOTTOMLEFT", xs[slot], floorY)
+		guide:SetHeight(drawH)
+		-- A year of guides would read as a filled grid: on a dense window only
+		-- the month boundaries carry one.
+		guide:SetShown(stepW >= 8 or monthStart)
 
 		local label = graph.slotLabels[slot]
 		if not label then
@@ -419,7 +447,9 @@ local function RefreshEconomyGraph()
 		else
 			label:SetText(day)
 		end
-		label:SetShown(stepW >= 20 or (data.days[slot].stamp % 2) == 0)
+		-- A year of dates would overlap; when points are closer than 20 pixels
+		-- only the first day and each new month are named.
+		label:SetShown(stepW >= 20 or monthStart)
 
 		-- A hit area over the label, so hovering a date names it in full.
 		local hit = graph.labelHits[slot]
@@ -443,6 +473,9 @@ local function RefreshEconomyGraph()
 		end
 		hit:ClearAllPoints()
 		hit:SetPoint("TOP", plot, "BOTTOMLEFT", xs[slot], 2)
+		-- The hit area follows the label spacing, so adjacent dates do not
+		-- steal each other's hover.
+		hit:SetSize(math.max(8, math.min(34, stepW - 1)), 16)
 		hit.info = { text = ns.FormatDate(data.days[slot].stamp), color = color }
 		hit:SetShown(label:IsShown())
 	end
@@ -512,7 +545,9 @@ local function RefreshEconomyGraph()
 		if left < 0 then left = 0 end
 		if right > width then right = width end
 		hit:SetPoint("BOTTOMLEFT", plot, "BOTTOMLEFT", left, 0)
-		hit:SetSize(math.max(6, right - left), height)
+		-- The days tile edge to edge. A minimum width would make a year's
+		-- hits overlap, and the last one would answer for every day.
+		hit:SetSize(math.max(1, right - left), height)
 		hit:Show()
 	end
 	for index = daysShown + 1, #graph.dayHits do
@@ -567,21 +602,34 @@ local function RefreshEconomyGraph()
 				marker:ClearAllPoints()
 				marker:SetPoint("CENTER", plot, "BOTTOMLEFT", x, y)
 				marker:SetSize(11, 11)
-				marker.tex:SetSize(6, 6)
+				-- A year of 6-pixel dots would read as a thick line. Dense
+				-- windows draw smaller dots and leave the mouse to the day
+				-- columns underneath.
+				local dot = math.max(2, math.min(6, stepW * 0.5))
+				marker.tex:SetSize(dot, dot)
 				marker.tex:SetColorTexture(color[1], color[2], color[3], 1)
+				marker:EnableMouse(stepW >= 8)
 				local title
 				if track.combined then
 					title = "All selected characters"
 				else
 					title = string.format("%s - %s %s", track.name, track.char.level or 0, track.char.class or "?")
 				end
+				local note = track.combined and "The sum of every ticked character's balance at the end of this day. " or ""
+				if slot == track.firstSlot then
+					note = note.."The first day Tally watched this character, so this point is that day's end: it holds whatever was already in the purse. "
+				end
+				if slot == daysShown and backDays == 0 then
+					note = note..(track.live and "the balance Tally is watching now"
+						or ("last known balance - Tally last saw this character "..ns.FormatDate(track.seen or 0)))
+				else
+					note = note.."The end-of-day balance for this date."
+				end
 				marker.info = {
 					title = title,
 					text = ns.FormatDate(data.days[slot].stamp).." - "..ns.MoneyColored(value),
 					color = color,
-					note = (track.combined and "The sum of every ticked character's balance at the end of this day. " or "")
-						..(slot == track.firstSlot and "The first day Tally watched this character, so this point is that day's end: it holds whatever was already in the purse. " or "")
-						..(track.live and "the balance Tally is watching now" or ("last known balance - Tally last saw this character "..ns.FormatDate(track.seen or 0))),
+					note = note,
 				}
 				-- The day's own table, for the hover: every ticked character
 				-- with a value that day, in the order the lines are drawn.
@@ -631,9 +679,9 @@ local function RefreshEconomyGraph()
 end
 
 local function BuildEconomyGraph(daily)
-	local card = CreateListCard(daily, 0, -4, 730, 434, "Economy graph")
+	local card = CreateListCard(daily, 0, -4, 730, 398, "Economy graph")
 	AddCardTitleNote(card, "Economy graph",
-		"End-of-day balances for the characters ticked in the Total picker, walked back from each last known balance. Hover a day for the exact balances, or a point for one character's number.")
+		"End-of-day balances for the characters ticked in the Total picker, walked back from each last known balance. Drag the sliders under the graph to choose the window, up to 365 days. Hover a day for the exact balances, or a point for one character's number.")
 	local plot = CreateFrame("Frame", nil, card)
 	plot:SetPoint("TOPLEFT", card, "TOPLEFT", 14, -48)
 	plot:SetPoint("BOTTOMRIGHT", card, "BOTTOMRIGHT", -14, 52)
@@ -689,35 +737,164 @@ local function BuildEconomyGraph(daily)
 	end)
 	economyWidgets.totalHit = totalHit
 
-	-- How far back the graph looks. A month is the longest window the daily
-	-- ledger keeps comfortably.
-	economyWidgets.graphDays = 31
-	local daysButton = CreateCornerButton(card, -12, -26)
-	SetCornerLabel(daysButton, GraphDaysLabel(economyWidgets.graphDays))
-	daysButton:SetScript("OnClick", function()
-		economyWidgets.graphDays = NextGraphDays(economyWidgets.graphDays)
-		-- The signature guard is a shortcut, and a window change must never be
-		-- caught by it: the redraw is asked for outright here.
+	-- The window controls, in a strip under the graph: how many days to draw,
+	-- and how far back the window ends, both in days and with a box beside the
+	-- slider. A month is the default; a year is the longest the ledger keeps.
+	economyWidgets.graphWindowDays = economyWidgets.graphWindowDays or GRAPH_DAYS_DEFAULT
+	economyWidgets.graphBackDays = economyWidgets.graphBackDays or 0
+	local strip = CreateFrame("Frame", nil, daily, "BackdropTemplate")
+	strip:SetBackdrop(TILE_BACKDROP)
+	strip:SetBackdropColor(0, 0, 0, 0.35)
+	strip:SetBackdropBorderColor(1, 0.72, 0.25, 0.12)
+	strip:SetPoint("TOPLEFT", daily, "TOPLEFT", 0, -406)
+	strip:SetSize(730, 26)
+	economyWidgets.graphStrip = strip
+
+	-- The two values are tied: together they cannot reach further back than
+	-- the year the ledger keeps. Clamping here means the sliders, the boxes and
+	-- the drawn window always agree.
+	local function ClampGraphRange()
+		local window = math.floor((economyWidgets.graphWindowDays or GRAPH_DAYS_DEFAULT) + 0.5)
+		local back = math.floor((economyWidgets.graphBackDays or 0) + 0.5)
+		window = math.max(1, math.min(GRAPH_DAYS_MAX, window))
+		back = math.max(0, math.min(GRAPH_DAYS_MAX - window + 1, back))
+		economyWidgets.graphWindowDays = window
+		economyWidgets.graphBackDays = back
+		return window, back
+	end
+
+	local function SyncGraphRange()
+		economyWidgets.graphRangeSyncing = true
+		local window, back = ClampGraphRange()
+		if economyWidgets.graphWindowSlider then
+			economyWidgets.graphWindowSlider:SetValue(window)
+			economyWidgets.graphWindowBox:SetText(tostring(window))
+			economyWidgets.graphBackSlider:SetValue(back)
+			economyWidgets.graphBackBox:SetText(tostring(back))
+		end
+		economyWidgets.graphRangeSyncing = false
+	end
+
+	local function ApplyGraphRange()
 		economyWidgets.graphSignature = nil
-		ns.Trace("daily graph: "..economyWidgets.graphDays.." days")
+		SyncGraphRange()
 		ns.RefreshEconomyGraph()
+	end
+
+	local function AddRangeControl(label, x, which)
+		local text = strip:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
+		text:SetPoint("LEFT", x, 0)
+		text:SetText(label)
+		text:SetTextColor(0.62, 0.62, 0.62)
+		local slider = CreateFrame("Slider", nil, strip, "OptionsSliderTemplate")
+		slider:SetPoint("LEFT", text, "RIGHT", 6, 0)
+		slider:SetWidth(150)
+		slider:SetHeight(16)
+		if which == "window" then
+			slider:SetMinMaxValues(1, GRAPH_DAYS_MAX)
+		else
+			slider:SetMinMaxValues(0, GRAPH_DAYS_MAX)
+		end
+		slider:SetValueStep(1)
+		if slider.SetObeyStepOnDrag then
+			slider:SetObeyStepOnDrag(true)
+		end
+		if slider.Low then
+			slider.Low:SetText("")
+		end
+		if slider.High then
+			slider.High:SetText("")
+		end
+		if slider.Text then
+			slider.Text:SetText("")
+		end
+		local box = CreateFrame("EditBox", nil, strip, "InputBoxTemplate")
+		box:SetSize(38, 18)
+		box:SetPoint("LEFT", slider, "RIGHT", 8, 0)
+		box:SetAutoFocus(false)
+		box:SetMaxLetters(3)
+		box:SetJustifyH("CENTER")
+
+		local function Apply(value)
+			value = math.floor((tonumber(value) or 0) + 0.5)
+			if which == "window" then
+				economyWidgets.graphWindowDays = math.max(1, math.min(GRAPH_DAYS_MAX, value))
+			else
+				economyWidgets.graphBackDays = math.max(0, value)
+			end
+			local window, back = ClampGraphRange()
+			ns.Trace("daily graph: "..window.." days, ending "..back.." days ago")
+			ApplyGraphRange()
+		end
+
+		slider:SetScript("OnValueChanged", function(_, value)
+			if economyWidgets.graphRangeSyncing then
+				return
+			end
+			Apply(value)
+		end)
+		box:SetScript("OnEnterPressed", function(self)
+			local value = tonumber(self:GetText()) or 0
+			self:ClearFocus()
+			Apply(value)
+		end)
+		box:SetScript("OnEscapePressed", function(self)
+			self:ClearFocus()
+			SyncGraphRange()
+		end)
+		slider:SetScript("OnEnter", function(self)
+			GameTooltip:SetOwner(self, "ANCHOR_TOP")
+			if which == "window" then
+				GameTooltip:AddLine("Days drawn", ACCENT[1], ACCENT[2], ACCENT[3])
+				GameTooltip:AddLine("How many days the graph draws, up to 365. The daily ledger keeps a year, so the whole window is stored balances rather than a guess.", 1, 1, 1, true)
+			else
+				GameTooltip:AddLine("Where the window ends", ACCENT[1], ACCENT[2], ACCENT[3])
+				GameTooltip:AddLine("How many days before today the window ends. 0 ends it today; slide it back to look at an older stretch. The two sliders together stay within a year.", 1, 1, 1, true)
+			end
+			GameTooltip:Show()
+		end)
+		slider:SetScript("OnLeave", function()
+			GameTooltip:Hide()
+		end)
+		if which == "window" then
+			economyWidgets.graphWindowSlider, economyWidgets.graphWindowBox = slider, box
+		else
+			economyWidgets.graphBackSlider, economyWidgets.graphBackBox = slider, box
+		end
+	end
+
+	AddRangeControl("days", 12, "window")
+	AddRangeControl("back", 260, "back")
+
+	local monthButton = CreateFrame("Button", nil, strip, "UIPanelButtonTemplate")
+	monthButton:SetSize(104, 18)
+	monthButton:SetPoint("LEFT", 500, 0)
+	monthButton:SetText("recent month")
+	monthButton:SetScript("OnClick", function()
+		economyWidgets.graphWindowDays = GRAPH_DAYS_DEFAULT
+		economyWidgets.graphBackDays = 0
+		ns.Trace("daily graph: recent month")
+		ApplyGraphRange()
 	end)
-	daysButton:SetScript("OnEnter", function(self)
-		GameTooltip:SetOwner(self, "ANCHOR_BOTTOMRIGHT")
-		GameTooltip:AddLine("How far back the graph looks", ACCENT[1], ACCENT[2], ACCENT[3])
-		GameTooltip:AddLine("Click to cycle 3 days, 7 days, 14 days and 31 days. The ledger keeps every day Tally has recorded, so the longer windows are drawn from stored balances rather than guessed at.", 1, 1, 1, true)
-		GameTooltip:Show()
+	economyWidgets.graphMonthButton = monthButton
+
+	local yearButton = CreateFrame("Button", nil, strip, "UIPanelButtonTemplate")
+	yearButton:SetSize(104, 18)
+	yearButton:SetPoint("LEFT", monthButton, "RIGHT", 8, 0)
+	yearButton:SetText("365 days")
+	yearButton:SetScript("OnClick", function()
+		economyWidgets.graphWindowDays = GRAPH_DAYS_MAX
+		economyWidgets.graphBackDays = 0
+		ns.Trace("daily graph: 365 days")
+		ApplyGraphRange()
 	end)
-	daysButton:SetScript("OnLeave", function()
-		GameTooltip:Hide()
-	end)
-	economyWidgets.graphDaysButton = daysButton
+	economyWidgets.graphYearButton = yearButton
+
+	SyncGraphRange()
 
 	-- The characters button opens the same Total picker every other Total
 	-- view uses; its ticks drive this graph too.
 	local charsButton = CreateCornerButton(card, -12, -26)
-	charsButton:ClearAllPoints()
-	charsButton:SetPoint("RIGHT", daysButton, "LEFT", -6, 0)
 	SetCornerLabel(charsButton, "characters")
 	charsButton:SetScript("OnClick", function()
 		ns.ShowCharPicker("levels", not (ns.charPickers.levels and ns.charPickers.levels.shown))

@@ -570,12 +570,13 @@ ns.dataContract.displaySources = {
 	economy = {
 		"char.gold.balance", "char.gold.first", "char.gold.income",
 		"char.gold.expenses", "char.gold.unclassified", "char.gold.daily",
-		"char.gold.tx", "char.sessions.history",
+		"char.gold.tx", "char.currency", "char.sessions.history",
 	},
 	professions = {
 		"char.professions.skills", "char.professions.crafts",
 		"char.professions.crafted", "char.professions.recipes",
 		"char.professions.cooldownStats", "char.professions.itemCooldowns",
+		"char.gathering",
 	},
 	combat = {
 		"char.combat.fights", "char.combat.combatSeconds", "char.combat.deaths",

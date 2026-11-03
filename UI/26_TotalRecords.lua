@@ -22,6 +22,28 @@ local LEDGER_NOTE = "Money moved between your own characters shows up on both si
 -- profession list's order button does.
 local RECORD_SORTS = { "sections", "characters", "alpha" }
 
+-- Records for the professions: what a character has gathered, and what a
+-- character has crafted in total. The singular and plural units let the row
+-- read "1 dish cooked" or "12 dishes cooked" without a second table.
+local GATHER_RECORD_LABELS = {
+	Herbalism = { label = "Most herbs picked", one = "herb picked", many = "herbs picked" },
+	Mining = { label = "Most items mined", one = "item mined", many = "items mined" },
+	Skinning = { label = "Most items skinned", one = "item skinned", many = "items skinned" },
+}
+local GATHER_RECORD_ORDER = { "Herbalism", "Mining", "Skinning" }
+local CRAFT_RECORD_LABELS = {
+	Alchemy = { label = "Most brewed", one = "item brewed", many = "items brewed" },
+	Blacksmithing = { label = "Most smithed", one = "item smithed", many = "items smithed" },
+	Cooking = { label = "Most cooked", one = "dish cooked", many = "dishes cooked" },
+	Enchanting = { label = "Most enchanted", one = "item enchanted", many = "items enchanted" },
+	Engineering = { label = "Most engineered", one = "item engineered", many = "items engineered" },
+	Inscription = { label = "Most inscribed", one = "item inscribed", many = "items inscribed" },
+	Jewelcrafting = { label = "Most gems cut", one = "gem cut", many = "gems cut" },
+	Leatherworking = { label = "Most leather crafted", one = "item crafted", many = "items crafted" },
+	Tailoring = { label = "Most tailored", one = "item tailored", many = "items tailored" },
+	["First Aid"] = { label = "Most bandages made", one = "item made", many = "items made" },
+}
+
 local function NextRecordSort(mode)
 	for index = 1, #RECORD_SORTS do
 		if RECORD_SORTS[index] == mode then
@@ -165,6 +187,46 @@ local function RefreshTotalRecords()
 		records.mostQuestGold and ns.MoneyColored(records.mostQuestGold.value),
 		records.mostQuestGold)
 
+	-- Merchant's Favor is a Forever-only currency. The section is absent on
+	-- clients without it, and it stays absent when no selected character has
+	-- a Favor record.
+	if ns.MerchantsFavorAvailable and ns.MerchantsFavorAvailable() then
+		local favor = records.favor or {}
+		local function AddFavor(label, value, record, remark, date)
+			if not value then
+				return
+			end
+			AddRecord("Merchant's Favor", label, value, record, remark, date)
+		end
+		AddFavor("Most Favor earned",
+			favor.mostEarned and ns.FormatNumber(favor.mostEarned.count),
+			favor.mostEarned)
+		AddFavor("Most Favor spent",
+			favor.mostSpent and ns.FormatNumber(favor.mostSpent.count),
+			favor.mostSpent)
+		AddFavor("Most Favor held",
+			favor.mostHeld and ns.FormatNumber(favor.mostHeld.count),
+			favor.mostHeld)
+		AddFavor("Most Favor in a day",
+			favor.bestDay and ns.FormatNumber(favor.bestDay.count),
+			favor.bestDay, nil,
+			favor.bestDay and favor.bestDay.day and ns.FormatDate(ns.DayToTime(favor.bestDay.day)))
+		AddFavor("Most Favor from one turn-in",
+			favor.bestGain and ns.FormatNumber(favor.bestGain.count),
+			favor.bestGain,
+			favor.bestGain and favor.bestGain.level and ("level "..favor.bestGain.level) or nil,
+			favor.bestGain and favor.bestGain.at and ns.FormatDate(favor.bestGain.at))
+		if (favor.earnedTotal or 0) > 0 then
+			AddFavor("Total Favor earned", ns.FormatNumber(favor.earnedTotal), nil, "all characters")
+		end
+		if (favor.spentTotal or 0) > 0 then
+			AddFavor("Total Favor spent", ns.FormatNumber(favor.spentTotal), nil, "all characters")
+		end
+		if (favor.heldTotal or 0) > 0 then
+			AddFavor("Total Favor held", ns.FormatNumber(favor.heldTotal), nil, "all characters")
+		end
+	end
+
 	AddRecord("World", "Most zones visited",
 		records.mostZones and (tostring(records.mostZones.count)..(records.mostZones.count == 1 and " zone" or " zones")),
 		records.mostZones)
@@ -226,6 +288,42 @@ local function RefreshTotalRecords()
 			..ItemCode(records.mostCraftedItem)
 			..CutRowText(records.mostCraftedItem.item or "?", 22).."|r"),
 		records.mostCraftedItem)
+
+	-- Gathering totals per profession. The holder gathered the most items;
+	-- the remark carries how many successful gathers it took.
+	for index = 1, #GATHER_RECORD_ORDER do
+		local profession = GATHER_RECORD_ORDER[index]
+		local record = records.mostGatheredByProfession and records.mostGatheredByProfession[profession]
+		if record then
+			local info = GATHER_RECORD_LABELS[profession]
+			local unit = info and (record.count == 1 and info.one or info.many) or (record.count == 1 and "item" or "items")
+			local remark
+			if (record.attempts or 0) > 0 then
+				remark = ns.FormatNumber(record.attempts)..(record.attempts == 1 and " gather" or " gathers")
+			end
+			AddRecord("Items and professions", info and info.label or ("Most gathered - "..profession),
+				ns.FormatNumber(record.count).." "..unit, record, remark)
+		end
+	end
+
+	-- Crafting totals per profession: every crafted item counts, not just the
+	-- profession's most-crafted recipe. Cooking says dishes; the others use
+	-- their own verb.
+	local craftedProfessions = {}
+	for profession in pairs(records.mostCraftedTotalByProfession or {}) do
+		if not GATHER_RECORD_LABELS[profession] then
+			craftedProfessions[#craftedProfessions + 1] = profession
+		end
+	end
+	table.sort(craftedProfessions)
+	for index = 1, #craftedProfessions do
+		local profession = craftedProfessions[index]
+		local record = records.mostCraftedTotalByProfession[profession]
+		local info = CRAFT_RECORD_LABELS[profession]
+		local unit = info and (record.count == 1 and info.one or info.many) or (record.count == 1 and "item crafted" or "items crafted")
+		AddRecord("Items and professions", info and info.label or ("Most crafted - "..profession),
+			ns.FormatNumber(record.count).." "..unit, record)
+	end
 
 	-- One row per profession that has a crafted item, then the cooldown
 	-- records for cooldowns someone actually used. Professions and cooldowns
@@ -301,6 +399,26 @@ local function RefreshTotalRecords()
 		records.mostBoughtUnits and (ns.FormatNumber(records.mostBoughtUnits.count).." items"),
 		records.mostBoughtUnits,
 		records.mostBoughtUnits and (ns.MoneyColored(records.mostBoughtUnits.spent).." spent"))
+
+	-- Fishing: the catches are inferred from a cast and the loot after it, so
+	-- these are collection records rather than one-catch records.
+	AddRecord("Fishing", "Most fish caught",
+		records.mostFishCaught and (ns.FormatNumber(records.mostFishCaught.count).." fish"),
+		records.mostFishCaught,
+		records.mostFishCaught and (ns.FormatNumber(records.mostFishCaught.kinds or 0).." kinds · "..ns.FormatNumber(records.mostFishCaught.zones or 0).." zones"))
+	AddRecord("Fishing", "Most valuable catch",
+		records.mostValuableCatch and ns.MoneyColored(records.mostValuableCatch.value),
+		records.mostValuableCatch,
+		records.mostValuableCatch and (ItemCode(records.mostValuableCatch)..(records.mostValuableCatch.item or "?").."|r"),
+		records.mostValuableCatch and records.mostValuableCatch.at and ns.FormatDate(records.mostValuableCatch.at))
+	AddRecord("Fishing", "Most lure casts",
+		records.mostFishingCasts and (ns.FormatNumber(records.mostFishingCasts.count).." casts"),
+		records.mostFishingCasts,
+		records.mostFishingCasts and (ns.FormatNumber(records.mostFishingCasts.catches or 0).." caught"))
+	AddRecord("Fishing", "Most kinds of fish",
+		records.mostFishKinds and (ns.FormatNumber(records.mostFishKinds.count).." kinds"),
+		records.mostFishKinds,
+		records.mostFishKinds and (ns.FormatNumber(records.mostFishKinds.catches or 0).." fish"))
 
 	-- Rendering, one branch per order. Every row is drawn by EmitRow, so the
 	-- four columns line up whatever order the rows arrive in.
