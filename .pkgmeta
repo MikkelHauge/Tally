@@ -1,11 +1,1 @@
 package-as: Tally
-
-# Tooling and generated files stay in the GitHub repository but are not part
-# of the addon zip. CurseForge ignores .git and .pkgmeta automatically.
-ignore:
-  - __pycache__
-  - "*.pyc"
-  - export_tally.py
-  - Tally-Export-2026-11-02-211516.xlsx
-  - README.md
-  - RELEASING.md
