@@ -503,6 +503,20 @@ function ns.SocialTick(char, now)
 	end
 
 	UpdateGuild(char, social, now)
+	-- A guildless character cannot have sent guild chat. Older builds counted
+	-- the chat type without checking, leaving a lifetime guild total that no
+	-- guild can explain. Clear it once the character has been observed
+	-- guildless and has no guild history at all.
+	if not social.guild.name then
+		local history = social.guild.history or {}
+		local joins = social.guild.joins or {}
+		local leaves = social.guild.leaves or {}
+		if #history == 0 and #joins == 0 and #leaves == 0 and (social.chat.guild or 0) > 0 then
+			social.chat.guild = 0
+			social.chat.byGuild = {}
+			ns.Trace("social: cleared guild chat counted while guildless")
+		end
+	end
 	if social.guild.name then
 		social.guild.seconds = social.guild.seconds + 1
 	else
@@ -524,21 +538,39 @@ local CHAT_BUCKET = {
 	CHANNEL = "channels", EMOTE = "emote",
 }
 
-local function CountSentChat(chatType, targetName)
+local lastChatAt, lastChatSource = {}, {}
+
+local function CountSentChat(chatType, targetName, source)
 	local char = ns.GetChar()
 	local social = Ensure(char)
 	if not social then
 		return
 	end
 	local bucket = CHAT_BUCKET[chatType or "SAY"] or "other"
-	social.chat[bucket] = (social.chat[bucket] or 0) + 1
+	-- The send hook and the chat event can both see one message on clients
+	-- that echo it. Only the first of the two counts it.
+	local now = (GetTime and GetTime()) or 0
+	if source and lastChatSource[bucket] and lastChatSource[bucket] ~= source
+		and now - (lastChatAt[bucket] or 0) < 2 then
+		return
+	end
+	lastChatAt[bucket] = now
+	lastChatSource[bucket] = source
 	if bucket == "guild" then
-		-- Guild chat and officer chat both count for the guild the character
-		-- is in when the message is sent.
+		-- Guild and officer chat both count for the guild the character is in
+		-- when the message is sent. GetGuildInfo can be quiet for a moment;
+		-- the guild the ticker already recorded is the fallback.
 		local guildName = GuildName("player")
+		if not guildName and social.guild then
+			guildName = social.guild.name
+		end
+		social.chat[bucket] = (social.chat[bucket] or 0) + 1
 		if guildName then
 			social.chat.byGuild[guildName] = (tonumber(social.chat.byGuild[guildName]) or 0) + 1
 		end
+		ns.Trace("chat: guild send counted ("..tostring(source or "?")..") guild="..tostring(guildName))
+	else
+		social.chat[bucket] = (social.chat[bucket] or 0) + 1
 	end
 	if bucket == "whisper" then
 		-- Whispers have their own counters; counting them in the chat total
@@ -554,6 +586,70 @@ local function CountSentChat(chatType, targetName)
 		return
 	end
 	social.chat.sent = social.chat.sent + 1
+end
+
+-- Clients that echo the player's own chat as a CHAT_MSG_* event give a
+-- taint-free second path to the same count. The send hook normally gets there
+-- first; CountSentChat keeps the two from counting one message twice.
+local CHAT_ECHO_TYPES = {
+	CHAT_MSG_SAY = "SAY",
+	CHAT_MSG_YELL = "YELL",
+	CHAT_MSG_PARTY = "PARTY",
+	CHAT_MSG_PARTY_LEADER = "PARTY",
+	CHAT_MSG_RAID = "RAID",
+	CHAT_MSG_RAID_LEADER = "RAID",
+	CHAT_MSG_INSTANCE_CHAT = "INSTANCE_CHAT",
+	CHAT_MSG_INSTANCE_CHAT_LEADER = "INSTANCE_CHAT",
+	CHAT_MSG_GUILD = "GUILD",
+	CHAT_MSG_OFFICER = "OFFICER",
+	CHAT_MSG_CHANNEL = "CHANNEL",
+	CHAT_MSG_EMOTE = "EMOTE",
+}
+
+local echoGuildSeen = 0
+
+local function OnOwnChatEcho(event, _, author, ...)
+	local chatType = CHAT_ECHO_TYPES[event]
+	if not chatType then
+		return
+	end
+	if chatType == "GUILD" or chatType == "OFFICER" then
+		echoGuildSeen = echoGuildSeen + 1
+		if echoGuildSeen <= 5 then
+			ns.Trace("chat echo: "..event.." author="..tostring(SafeString(author)))
+		end
+	end
+	-- The player's GUID is the surest mark of an own message; the author name
+	-- is the fallback because some clients write it as a chat link.
+	local own = false
+	local playerGUID = type(UnitGUID) == "function" and UnitGUID("player") or nil
+	if playerGUID then
+		for _, value in ipairs({...}) do
+			if value == playerGUID then
+				own = true
+				break
+			end
+		end
+	end
+	if not own then
+		local name = PlayerName(author)
+		local player = PlayerName(ns.playerName
+			or (type(UnitName) == "function" and UnitName("player")) or nil)
+		own = name and player and string.lower(name) == string.lower(player)
+	end
+	if not own then
+		return
+	end
+	CountSentChat(chatType, nil, "echo")
+end
+
+-- A failure here must not make the registrar disable the handler for the
+-- session; the next message should still get its chance.
+local function SafeOwnChatEcho(...)
+	local ok, err = pcall(OnOwnChatEcho, ...)
+	if not ok then
+		ns.Trace("chat echo failed: "..tostring(err))
+	end
 end
 
 local lastSendAt = 0
@@ -580,7 +676,7 @@ local function HookSend()
 			return
 		end
 		lastSendAt = now
-		CountSentChat(chatType, target)
+		CountSentChat(chatType, target, "direct")
 	end)
 	if ok then
 		hookedSend = SendChatMessage
@@ -679,8 +775,10 @@ end
 -- guild actions such as /invite. Hooking SendChatMessage and ChatEdit_SendText
 -- is secure and covers the send path without touching the frame.
 -- Last resort for clients where SendChatMessage itself is unreachable.
+local hookedEditText
 local function HookEditText()
-	if type(ChatEdit_SendText) ~= "function" or type(hooksecurefunc) ~= "function" then
+	if type(ChatEdit_SendText) ~= "function" or ChatEdit_SendText == hookedEditText
+		or type(hooksecurefunc) ~= "function" then
 		return
 	end
 	local ok = pcall(hooksecurefunc, "ChatEdit_SendText", function(editBox)
@@ -698,14 +796,15 @@ local function HookEditText()
 				return
 			end
 			lastSendAt = now
-			CountSentChat(chatType, WhisperTarget(editBox, ChatCommandTarget(text)))
+			CountSentChat(chatType, WhisperTarget(editBox, ChatCommandTarget(text)), "direct")
 			return
 		end
 		lastSendAt = now
 		local chatType = EditBoxChatType(editBox)
-		CountSentChat(chatType, chatType == "WHISPER" and WhisperTarget(editBox) or nil)
+		CountSentChat(chatType, chatType == "WHISPER" and WhisperTarget(editBox) or nil, "direct")
 	end)
 	if ok then
+		hookedEditText = ChatEdit_SendText
 		ns.socialEditHooked = true
 	end
 end
@@ -1388,6 +1487,11 @@ end
 
 ns.On("CHAT_MSG_WHISPER", OnWhisperReceived, "Social")
 ns.On("CHAT_MSG_BN_WHISPER", OnWhisperReceived, "Social")
+-- A second, event-based path for clients where the send hook cannot see the
+-- player's own chat. CountSentChat deduplicates the two.
+for event in pairs(CHAT_ECHO_TYPES) do
+	ns.On(event, SafeOwnChatEcho, "Social")
+end
 ns.On("TRADE_SHOW", OnTradeShow, "Social")
 ns.On("TRADE_ACCEPT_UPDATE", OnTradeAccept, "Social")
 ns.On("TRADE_CLOSED", OnTradeClosed, "Social")
@@ -1442,10 +1546,32 @@ function ns.SocialRestorePresence(presence)
 	ns.Trace("presence: resuming with "..count.." group member(s) already counted")
 end
 
+function ns.SocialChatDebug()
+	local char = ns.GetChar()
+	local social = char and char.social
+	local chat = social and social.chat or {}
+	local guild = social and social.guild or {}
+	local byGuild = chat.byGuild or {}
+	local current = guild.name and (tonumber(byGuild[guild.name]) or 0) or 0
+	local now = (GetTime and GetTime()) or 0
+	local source = lastChatSource["guild"] or "none"
+	local age = lastChatAt["guild"] and math.floor(now - lastChatAt["guild"]) or -1
+	return "chat: guild="..tostring(chat.guild or 0)
+		..", currentGuild="..tostring(guild.name).." ("..current..")"
+		..", lastSend="..source.." "..age.."s ago"
+		..", echoGuildEvents="..echoGuildSeen
+end
+
 ns.social = {
 	Ensure = Ensure,
 	UnitCombo = UnitCombo,
 	ScanInbox = ScanInbox,
 	SnapshotPresence = ns.SocialSnapshotPresence,
 	RestorePresence = ns.SocialRestorePresence,
+	Rehook = function()
+		HookSend()
+		HookEditText()
+	end,
+	ChatDebug = ns.SocialChatDebug,
 }
+ns.SocialRehook = ns.social.Rehook

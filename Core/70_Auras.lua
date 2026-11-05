@@ -30,12 +30,14 @@ do
 	-- is well past a list being rebuilt (leaving combat, an instance change)
 	-- and still quick enough that a real loss is noticed.
 	local AURA_MISS = 5
-	-- A return counts as a new gain only when the aura was away for at least
-	-- this long. The window is the aura's own duration - a buff cannot have
-	-- really lapsed and been re-gained inside the time it was going to last -
-	-- floored at five seconds and capped at five minutes, so a client that
-	-- drops and re-applies a long buff is read as refreshing it rather than
-	-- granting it afresh. This is what turned two Camp Benefits into fifty.
+	-- For buffs, a return counts as a new gain only when the aura was away
+	-- for at least this long. The window is the aura's own duration - a buff
+	-- cannot have really lapsed and been re-gained inside the time it was
+	-- going to last - floored at five seconds and capped at five minutes, so
+	-- a client that drops and re-applies a long buff is read as refreshing
+	-- it rather than granting it afresh. This is what turned two Camp
+	-- Benefits into fifty. Debuffs are different: each landing is an
+	-- application, so a return or a refreshed expiration counts.
 	local AURA_REFRESH_MIN = 5
 	local AURA_REFRESH_MAX = 300
 	local aurasAnnounced = false
@@ -74,6 +76,36 @@ do
 		return value
 	end
 
+	-- A readable spell name for an aura whose own name the client sealed.
+	-- The spell id often stays readable, and C_Spell/GetSpellInfo can still
+	-- name it. Returns nil when that answer is sealed too.
+	local sealedAuraTried = {}
+	local function SpellName(spellID)
+		local id = tonumber(spellID)
+		if not id then
+			return nil
+		end
+		if type(C_Spell) == "table" and type(C_Spell.GetSpellInfo) == "function" then
+			local ok, info = pcall(C_Spell.GetSpellInfo, id)
+			if ok and type(info) == "table" then
+				local name = ReadableName(info.name)
+				if name then
+					return name
+				end
+			end
+		end
+		if type(GetSpellInfo) == "function" then
+			local ok, name = pcall(GetSpellInfo, id)
+			if ok then
+				name = ReadableName(name)
+				if name then
+					return name
+				end
+			end
+		end
+		return nil
+	end
+
 	-- Reads one aura slot on the player. Returns its name, spell id and aura
 	-- instance id, or nil when the slot is empty, sealed, or the client will
 	-- not answer. The instance id is what the client's own buff buttons hand
@@ -84,29 +116,54 @@ do
 			if not ok or type(aura) ~= "table" then
 				return nil
 			end
-			local name = ReadableName(aura.name)
-			if not name then
-				return nil
-			end
 			local spellId = type(aura.spellId) == "number" and aura.spellId or nil
 			local instanceID = type(aura.auraInstanceID) == "number" and aura.auraInstanceID or nil
 			local duration = type(aura.duration) == "number" and aura.duration or nil
-			return name, spellId, instanceID, duration
+			local expiration = type(aura.expirationTime) == "number" and aura.expirationTime or nil
+			local name = ReadableName(aura.name)
+			if not name and spellId then
+				name = SpellName(spellId)
+			end
+			if not name then
+				local key = tostring(filter)..":"..tostring(spellId or index)
+				if not sealedAuraTried[key] then
+					sealedAuraTried[key] = true
+					ns.Trace("auras: "..tostring(filter).." slot "..index
+						.." has no readable name (spell "..tostring(spellId)..")")
+				end
+				return nil
+			end
+			return name, spellId, instanceID, duration, expiration
 		end
 		local reader = (filter == "HARMFUL") and UnitDebuff or UnitAura
 		if type(reader) ~= "function" then
 			return nil
 		end
-		-- The deprecated tuple: name first, spell id tenth, duration fifth.
-		local ok, name, _, _, _, duration, _, _, _, _, spellId = pcall(reader, "player", index, filter)
+		-- The deprecated tuple: name first, spell id tenth, duration fifth
+		-- and expiration time sixth.
+		local ok, name, _, _, _, duration, expiration, _, _, _, spellId = pcall(reader, "player", index, filter)
 		if not ok then
 			return nil
 		end
 		name = ReadableName(name)
 		if not name then
+			local id = type(spellId) == "number" and spellId or nil
+			if id then
+				name = SpellName(id)
+			end
+		end
+		if not name then
+			local key = tostring(filter)..":"..tostring(spellId or index)
+			if not sealedAuraTried[key] then
+				sealedAuraTried[key] = true
+				ns.Trace("auras: "..tostring(filter).." slot "..index
+					.." has no readable name (spell "..tostring(spellId)..")")
+			end
 			return nil
 		end
-		return name, type(spellId) == "number" and spellId or nil, nil, type(duration) == "number" and duration or nil
+		return name, type(spellId) == "number" and spellId or nil, nil,
+			type(duration) == "number" and duration or nil,
+			type(expiration) == "number" and expiration or nil
 	end
 
 	local function AurasUsable()
@@ -434,7 +491,7 @@ do
 		end
 		local empty = 0
 		for index = 1, AURA_SLOTS do
-			local name, spellID, instanceID, duration = ReadAuraSlot(index, filter)
+			local name, spellID, instanceID, duration, expiration = ReadAuraSlot(index, filter)
 			if not name then
 				empty = empty + 1
 				if empty >= AURA_GAP then
@@ -489,6 +546,18 @@ do
 				if duration and duration > 0 then
 					entry.duration = duration
 				end
+				-- A debuff that is refreshed is another application even when
+				-- the old one never left the bar. A forward jump in the
+				-- client's expiration time is that refresh; buffs keep the
+				-- "same buff" handling below.
+				local refreshed = false
+				if not isBuffs and expiration and entry.expirationTime
+					and expiration > entry.expirationTime + 1 then
+					refreshed = true
+				end
+				if expiration then
+					entry.expirationTime = expiration
+				end
 				-- When this aura was last actually seen, which is how long it
 				-- has been away when it comes back.
 				local lastSeen = auras.lastSeen and auras.lastSeen[name] or 0
@@ -497,10 +566,16 @@ do
 				end
 				auras.lastSeen[name] = now
 				local window = math.max(AURA_REFRESH_MIN, math.min(AURA_REFRESH_MAX, entry.duration or 0))
-				-- Gone means the miss rule has already let it drop; a return is
-				-- a gain only when it was away at least its own window.
+				-- Gone means the miss rule has already let it drop; a buff is
+				-- a gain again only when it was away at least its own window.
+				-- A debuff that is gone and comes back is a new landing.
 				local wasGone = not seen[name]
-				local appeared = wasGone and (now - lastSeen) >= window
+				local appeared
+				if isBuffs then
+					appeared = wasGone and (now - lastSeen) >= window
+				else
+					appeared = wasGone
+				end
 				if wasGone then
 					seen[name] = true
 					if lower == campBuff or lower == CAMP_BENEFITS then
@@ -509,7 +584,7 @@ do
 							math.floor(now - lastSeen), math.floor(window)))
 					end
 				end
-				if appeared then
+				if appeared or refreshed then
 					entry.count = entry.count + 1
 				end
 				entry.seconds = entry.seconds + 1

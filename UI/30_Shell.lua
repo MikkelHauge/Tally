@@ -800,6 +800,11 @@ end
 -- Called by Core on every ticker step and after data changes; only redraws
 -- while the window is shown.
 function ns.OnDataTick()
+	if ns.SocialRehook then
+		-- Another addon can replace the chat functions after login. Rechecking
+		-- is a function-object compare; a replacement is re-hooked here.
+		ns.SocialRehook()
+	end
 	if mainFrame and mainFrame:IsShown() then
 		if activeTab == "overview" then
 			RefreshCharacterPage()

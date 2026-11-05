@@ -250,15 +250,22 @@ local function RefreshEconomyFavor()
 		return
 	end
 	local char = DisplayChar()
+	if not char and ns.GetChar then
+		-- The tab is per character. If the view lookup came back empty, fall
+		-- back to the character being played rather than claiming none exists.
+		char = ns.GetChar()
+	end
 	local entry = EntryFor(char)
 	RefreshTiles(entry)
 
 	if not char then
-		ShowCardText(card, "No character selected.")
+		ns.Trace("favor: no character record for the card (charKey="..tostring(ns.charKey)
+			..", viewKey="..tostring(ns.viewKey)..")")
+		ShowCardText(card, "No Merchant's Favor collected yet. Turn in a Waylaid Crate with Tally running.")
 		return
 	end
 	if not entry then
-		ShowCardText(card, "No Merchant's Favor recorded for this character yet. Turn in a Waylaid Crate with Tally running.")
+		ShowCardText(card, "No Merchant's Favor collected for this character yet. Turn in a Waylaid Crate with Tally running.")
 		return
 	end
 	if favorWidgets.view == "recent" then

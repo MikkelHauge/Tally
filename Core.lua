@@ -23,7 +23,7 @@ local addonName, ns = ...
 
 -- Build string reported by "/tally debug" and the trace block. Set by the
 -- maintainer; no logic reads it.
-ns.BUILD = "20261105 (Version follows the release date; Forever only.)"
+ns.BUILD = "20261105.1 (Version follows the release date; Forever only.)"
 
 -- In-memory only: key of the character the window and the printed reports
 -- describe when it differs from the character being played; nil when none.
@@ -4002,6 +4002,9 @@ local function HandleSlash(message)
 		end
 		ns.Print("schema: "..tostring(ns.SchemaVersion and ns.SchemaVersion() or 0).." of "..tostring(ns.SCHEMA_VERSION or "?").."; events: "..#events..", handlers: "..handlers)
 		ns.Print("social hooks: send="..tostring(ns.socialSendHooked)..", edit="..tostring(ns.socialEditHooked))
+		if ns.SocialChatDebug then
+			ns.Print(ns.SocialChatDebug())
+		end
 		if ns.AuctionDebugText then
 			ns.Print(ns.AuctionDebugText())
 		end

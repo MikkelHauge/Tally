@@ -705,7 +705,10 @@ local function SkillLevelRows(char, names, order)
 			end
 			local rankText = maxRank > 0 and (" ("..after.."/"..maxRank..")") or ""
 			values[index] = "+"..gain..rankText
-			colors[index] = RankColor(after) or (gain > 0 and GREEN or ROW_DETAIL_DIM)
+			-- A level with no gain is a neutral row. Rank colour belongs to
+			-- points actually gained, so "+0" stays grey instead of borrowing
+			-- the colour of the current rank.
+			colors[index] = gain > 0 and (RankColor(after) or GREEN) or ROW_DETAIL_DIM
 			local line = name.."  +"..gain..rankText
 			if capHit and milestone then
 				line = line.."  ·  "..(after == milestone and "reached " or "passed ")..milestone
