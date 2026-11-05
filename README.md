@@ -11,9 +11,10 @@ What is tracked:
   by channel, whispers, trades, mail, duels, and the races/classes met).
 - **Playtime** - sessions, level-ups, `/played` sync, alive/afk time.
 - **Economy** - balance history, income/expense ledger, trades, auction
-  activity, professions, and Merchant's Favor on Forever.
+  activity, professions, disenchant gains and Merchant's Favor on Forever.
 - **Combat** - fights, kills, deaths, buffs and debuffs.
-- **Loot** - looted, gathered and crafted items, quality, value and best finds.
+- **Loot** - looted, gathered and crafted items, quality, value, best finds and
+  destroyed items.
 - **Explore** - zones, dungeons, distance, flights and mounted time.
 - **Total** - per-character and combined figures, records, logs and graphs.
 

@@ -186,8 +186,8 @@ local function RefreshExplore()
 	DistanceTip(exploreWidgets.tiles[7], mountedDistance, onFootDistance, "mounted")
 
 	-- Tall rows: the place on the left, active time on the right, and visits
-	-- plus the first day seen on the detail line. Only active time is
-	-- counted, so AFK hours are not included.
+	-- plus the first day seen on the detail line. Time is counted while
+	-- logged in, like the rest of played time.
 	local zoneEntries = {}
 	for index = 1, #zoneList do
 		local zone = zoneList[index]
@@ -250,7 +250,7 @@ local function BuildExplorePage(page)
 	exploreWidgets.zones = CreateListCard(page, 0, -156, 359, 304, "Time in zones")
 	exploreWidgets.dungeons = CreateListCard(page, 371, -156, 359, 304, "Time in dungeons")
 	AddCardTitleNote(exploreWidgets.zones, "Time in zones",
-		"Time spent in each zone and its visits, counted second by second and leaving AFK out. A visit is leaving and coming back; logging in or reloading is not one.")
+		"Time spent in each zone and its visits, counted second by second while logged in. A visit is leaving and coming back; logging in or reloading is not one.")
 	AddCardTitleNote(exploreWidgets.dungeons, "Time in dungeons",
 		"Time spent in each instance, with runs and bosses; raids count here too. A run is one entry, so the same place entered three times reads three.")
 	-- Both lists keep every entry, so both cards take the wheel, and both

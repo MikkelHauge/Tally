@@ -272,7 +272,7 @@ local function AppendCooldownRows(lines, book, now)
 	lines[#lines + 1] = { divider = true }
 end
 
-local function AppendProfessionRows(lines, skill, book, crafts, most)
+local function AppendProfessionRows(lines, skill, book, crafts, most, store)
 	local list = type(book) == "table" and book.list or nil
 	local outputItems = type(book) == "table" and book.items or nil
 	local recipeIDs = type(book) == "table" and book.ids or nil
@@ -304,6 +304,27 @@ local function AppendProfessionRows(lines, skill, book, crafts, most)
 			left = "   Most crafted: "..code..name.."|r x"..ns.FormatNumber(most.count),
 			leftColor = ROW_DETAIL_DIM,
 		}
+	end
+	if CanonicalProfession(skill.name) == "Enchanting" then
+		local stats = type(store) == "table" and store.disenchants
+		local count = type(stats) == "table" and (tonumber(stats.count) or 0) or 0
+		if count > 0 then
+			local lines2 = {
+				{ text = ns.FormatNumber(count)..(count == 1 and " item disenchanted" or " items disenchanted") },
+			}
+			if stats.lastAt then
+				lines2[#lines2 + 1] = { text = "Last: "..ns.FormatDate(stats.lastAt) }
+			end
+			lines[#lines + 1] = {
+				left = "   Disenchants: "..ns.FormatNumber(count),
+				leftColor = ROW_DETAIL_DIM,
+				tip = {
+					kind = "note", title = "Disenchants",
+					lines = lines2,
+					note = "Successful Disenchant casts. The materials gained are counted as Enchanting crafts.",
+				},
+			}
+		end
 	end
 	if list and #list > 0 then
 		local categoryList = type(book) == "table" and book.cats or nil
@@ -862,7 +883,7 @@ local function RefreshRecipeCard(card, char, skillName)
 	local book = recipeBook[skillName]
 	local lines = {}
 	AppendCooldownRows(lines, book, ns.Now())
-	AppendProfessionRows(lines, skill, book, crafts, ns.professions.MostCraftedFor(char, skillName))
+	AppendProfessionRows(lines, skill, book, crafts, ns.professions.MostCraftedFor(char, skillName), store)
 	local title = CharTitle(char, skillName)
 	card.noteTitle = title
 	if FillScrollingLines(card, lines, card.store, card.offsetField, title, 44) == 0 then
@@ -899,7 +920,7 @@ local function RefreshSecondaryCard(card, char)
 			end
 			first = false
 			AppendCooldownRows(lines, recipeBook[name], ns.Now())
-			AppendProfessionRows(lines, skill, recipeBook[name], crafts, ns.professions.MostCraftedFor(char, name))
+			AppendProfessionRows(lines, skill, recipeBook[name], crafts, ns.professions.MostCraftedFor(char, name), store)
 		end
 	end
 	local title = CharTitle(char, "Secondary professions")
@@ -907,6 +928,214 @@ local function RefreshSecondaryCard(card, char)
 	if FillScrollingLines(card, lines, card.store, card.offsetField, title, 44) == 0 then
 		ShowCardText(card, "No secondary professions recorded yet.")
 	end
+end
+
+local SKILL_TILE_LABELS = { "Average per level", "Most skill gains", "Highest profession", "Lowest profession" }
+local MATERIAL_TILE_LABELS = { "Materials gained", "Most common", "Most valuable", "Disenchants" }
+
+local function HasEnchanting(char)
+	local store = char and char.professions
+	for _, skill in ipairs(type(store) == "table" and store.skills or {}) do
+		if type(skill) == "table" and (tonumber(skill.rank) or 0) > 0
+			and CanonicalProfession(skill.name) == "Enchanting" then
+			return true
+		end
+	end
+	return false
+end
+
+local function EnchantingMaterialData(char)
+	local store = char and char.professions
+	local byLevel = type(store) == "table" and store.enchantingByLevel or nil
+	if type(byLevel) ~= "table" then
+		return nil
+	end
+	local totals, total = {}, 0
+	for _, row in pairs(byLevel) do
+		if type(row) == "table" then
+			for name, count in pairs(row) do
+				count = tonumber(count) or 0
+				if count > 0 then
+					totals[name] = (totals[name] or 0) + count
+					total = total + count
+				end
+			end
+		end
+	end
+	if total <= 0 then
+		return nil
+	end
+	local mostName, mostCount
+	for name, count in pairs(totals) do
+		if not mostCount or count > mostCount
+			or (count == mostCount and tostring(name) < tostring(mostName)) then
+			mostName, mostCount = name, count
+		end
+	end
+	local crafted = type(store) == "table" and store.crafted or {}
+	local valuableName, valuableValue, valuableQuality
+	for name, count in pairs(totals) do
+		local tally = crafted[name]
+		local itemID = type(tally) == "table" and tally.itemID or nil
+		local _, _, quality, sellPrice = ns.ItemInfo(itemID)
+		local value = (tonumber(sellPrice) or 0) * count
+		if value > (valuableValue or 0) then
+			valuableName, valuableValue = name, value
+			valuableQuality = quality or (type(tally) == "table" and tally.quality) or nil
+		end
+	end
+	local stats = type(store) == "table" and store.disenchants
+	return {
+		total = total,
+		mostName = mostName, mostCount = mostCount,
+		valuableName = valuableName, valuableValue = valuableValue, valuableQuality = valuableQuality,
+		disenchants = type(stats) == "table" and (tonumber(stats.count) or 0) or 0,
+		firstAt = type(stats) == "table" and stats.firstAt or nil,
+		lastAt = type(stats) == "table" and stats.lastAt or nil,
+	}
+end
+
+local function EnchantingMaterialRows(char, order)
+	local store = char and char.professions
+	local byLevel = type(store) == "table" and store.enchantingByLevel or nil
+	if type(byLevel) ~= "table" then
+		return nil
+	end
+	local levels = {}
+	for key, row in pairs(byLevel) do
+		if type(row) == "table" and next(row) ~= nil then
+			levels[#levels + 1] = { level = tonumber(key) or 0, row = row }
+		end
+	end
+	if #levels == 0 then
+		return nil
+	end
+	table.sort(levels, function(a, b)
+		if order == "low" then
+			return a.level < b.level
+		end
+		return a.level > b.level
+	end)
+	local crafted = type(store) == "table" and store.crafted or {}
+	local rows = {}
+	for index = 1, #levels do
+		local entry = levels[index]
+		local names = {}
+		for name, count in pairs(entry.row) do
+			count = tonumber(count) or 0
+			if count > 0 then
+				names[#names + 1] = { name = name, count = count }
+			end
+		end
+		table.sort(names, function(a, b)
+			if a.count ~= b.count then
+				return a.count > b.count
+			end
+			return tostring(a.name) < tostring(b.name)
+		end)
+		local parts, tipLines = {}, {}
+		for nameIndex = 1, #names do
+			local item = names[nameIndex]
+			local tally = crafted[item.name]
+			local quality = type(tally) == "table" and tally.quality or nil
+			local text = (quality and QualityCode(quality) or "")..item.name
+				..(quality and "|r" or "").." x"..ns.FormatNumber(item.count)
+			parts[#parts + 1] = text
+			tipLines[#tipLines + 1] = { text = text }
+		end
+		local shown = {}
+		for nameIndex = 1, math.min(3, #parts) do
+			shown[#shown + 1] = parts[nameIndex]
+		end
+		if #parts > 3 then
+			shown[#shown + 1] = "+"..(#parts - 3).." more"
+		end
+		if #names > 0 then
+			rows[#rows + 1] = {
+				left = "Level "..tostring(entry.level),
+				right = table.concat(shown, "  ·  "),
+				rightColor = ns.VALUE_COLOR,
+				tip = {
+					kind = "note",
+					title = "Enchanting materials at level "..tostring(entry.level),
+					lines = tipLines,
+					note = "Gained from disenchanting. These materials count as crafted Enchanting items.",
+					key = "enchantingLevel|"..tostring(entry.level),
+				},
+			}
+		end
+	end
+	return rows
+end
+
+local function RefreshEnchantingTiles(card, char)
+	local tiles = card and card.tiles
+	if not tiles or #tiles == 0 then
+		return
+	end
+	for index = 1, math.min(#tiles, #MATERIAL_TILE_LABELS) do
+		if tiles[index].label then
+			tiles[index].label:SetText(MATERIAL_TILE_LABELS[index])
+		end
+	end
+	local data = EnchantingMaterialData(char)
+	if not data then
+		for index = 1, #tiles do
+			SetTile(tiles[index], "-", "")
+			tiles[index].tipInfo = nil
+		end
+		return
+	end
+	SetTile(tiles[1], ns.FormatNumber(data.total), "from disenchanting")
+	tiles[1].tipInfo = {
+		kind = "note", title = "Materials gained",
+		lines = {
+			{ text = ns.FormatNumber(data.total).." materials from disenchanting" },
+			{ text = "Counted as Enchanting crafts" },
+		},
+	}
+	if data.mostName then
+		local tally = char.professions and char.professions.crafted and char.professions.crafted[data.mostName]
+		local quality = type(tally) == "table" and tally.quality or nil
+		SetTile(tiles[2], CutRowText(data.mostName, 18),
+			"x"..ns.FormatNumber(data.mostCount),
+			quality and ns.QUALITY_COLORS[quality] or nil)
+		tiles[2].tipInfo = {
+			kind = "note", title = data.mostName,
+			lines = {
+				{ text = ns.FormatNumber(data.mostCount).." gained in total" },
+				{ text = "Most common Enchanting material" },
+			},
+		}
+	else
+		SetTile(tiles[2], "-", "no material yet")
+		tiles[2].tipInfo = nil
+	end
+	if data.valuableName and data.valuableValue > 0 then
+		SetTile(tiles[3], ns.MoneyString(data.valuableValue, 15),
+			CutRowText(data.valuableName, 24),
+			data.valuableQuality and ns.QUALITY_COLORS[data.valuableQuality] or nil)
+		tiles[3].tipInfo = {
+			kind = "note", title = data.valuableName,
+			lines = {
+				{ text = ns.MoneyColored(data.valuableValue).." vendor value" },
+				{ text = "Most valuable Enchanting material pile" },
+			},
+		}
+	else
+		SetTile(tiles[3], "-", "no priced material")
+		tiles[3].tipInfo = nil
+	end
+	SetTile(tiles[4], ns.FormatNumber(data.disenchants), "items disenchanted")
+	local tip = {
+		kind = "note", title = "Disenchants",
+		lines = { { text = ns.FormatNumber(data.disenchants)..(data.disenchants == 1 and " item disenchanted" or " items disenchanted") } },
+		note = "Successful Disenchant casts. The materials gained are counted as crafted Enchanting items.",
+	}
+	if data.lastAt then
+		tip.lines[#tip.lines + 1] = { text = "Last: "..ns.FormatDate(data.lastAt) }
+	end
+	tiles[4].tipInfo = tip
 end
 
 local function AddLevelTileTip(tile)
@@ -938,6 +1167,11 @@ local function RefreshLevelTiles(card, names, stats)
 	local tiles = card and card.tiles
 	if not tiles or #tiles == 0 then
 		return
+	end
+	for index = 1, math.min(#tiles, #SKILL_TILE_LABELS) do
+		if tiles[index].label then
+			tiles[index].label:SetText(SKILL_TILE_LABELS[index])
+		end
 	end
 	if not stats or not names or #names == 0 then
 		for index = 1, #tiles do
@@ -1043,9 +1277,24 @@ local function BuildLevelCard(parent, x, y, width, height, store, offsetField, r
 		"One column per profession this character has, and one row per character level. Rows start highest level first; the corner button switches between descending and ascending, and levels are the only thing they are sorted by. Each cell is the skill gained at that level, from the skill-ups Tally actually saw, with the rank and current cap in brackets. Green = more than 25 points below the next cap, amber = within 25, red = at the cap, gold = 300. Ranks are read at login; this view is about the live gains, not the rank itself.")
 	AddCardScrollbar(card, store, offsetField, refresh)
 	MakeCardScrollable(card, store, offsetField, refresh)
+	-- The level card's rows carry hover notes (skill gains, ranks and the
+	-- disenchant materials view); this card did not previously wire them.
+	card:SetScript("OnUpdate", function()
+		RowHoverTick(card)
+	end)
+	card:SetScript("OnLeave", function()
+		card.hoverKey = nil
+		if GameTooltip:IsOwned(card) then
+			GameTooltip:Hide()
+		end
+	end)
 	card.store = store
 	card.offsetField = offsetField
 	card.levelOrder = card.levelOrder or "high"
+	card.view = card.view or "skills"
+	card.noteTextSkills = "One column per profession this character has, and one row per character level. Rows start highest level first; the corner button switches between descending and ascending, and levels are the only thing they are sorted by. Each cell is the skill gained at that level, from the skill-ups Tally actually saw, with the rank and current cap in brackets. Green = more than 25 points below the next cap, amber = within 25, red = at the cap, gold = 300. Ranks are read at login; this view is about the live gains, not the rank itself."
+	card.noteTextMaterials = "Materials gained from disenchanting, grouped by the character level they were gained at. They count as crafted Enchanting items. The corner button switches back to the skill-gain matrix; the level order button still applies."
+	card.noteText = card.noteTextSkills
 	local orderButton = CreateCornerButton(card)
 	local function OrderLabel()
 		return card.levelOrder == "low" and "level: asc" or "level: desc"
@@ -1066,6 +1315,25 @@ local function BuildLevelCard(parent, x, y, width, height, store, offsetField, r
 	orderButton:SetScript("OnLeave", function()
 		GameTooltip:Hide()
 	end)
+	local materialsButton = CreateCornerButton(card)
+	materialsButton:ClearAllPoints()
+	materialsButton:SetPoint("TOPRIGHT", orderButton, "TOPLEFT", -6, 0)
+	materialsButton:Hide()
+	materialsButton:SetScript("OnClick", function()
+		card.view = card.view == "materials" and "skills" or "materials"
+		store[offsetField] = 0
+		refresh()
+	end)
+	materialsButton:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_BOTTOMRIGHT")
+		GameTooltip:AddLine("Profession view", ACCENT[1], ACCENT[2], ACCENT[3])
+		GameTooltip:AddLine("Switch between the skill-gain matrix and the materials gained from disenchanting at each character level.", 1, 1, 1, true)
+		GameTooltip:Show()
+	end)
+	materialsButton:SetScript("OnLeave", function()
+		GameTooltip:Hide()
+	end)
+	card.materialsButton = materialsButton
 	return card
 end
 
@@ -1074,13 +1342,42 @@ local function RefreshLevelCard(card, char)
 		return
 	end
 	if not char then
+		if card.materialsButton then
+			card.materialsButton:Hide()
+		end
+		card.view = "skills"
 		RefreshLevelTiles(card, {}, nil)
 		ShowCardText(card, "No character selected.")
+		return
+	end
+	local hasEnchanting = HasEnchanting(char)
+	if not hasEnchanting then
+		card.view = "skills"
+	end
+	local materials = card.view == "materials"
+	if card.materialsButton then
+		card.materialsButton:SetShown(hasEnchanting)
+		SetCornerLabel(card.materialsButton, materials and "skill gains" or "materials")
+	end
+	if materials then
+		local title = CharTitle(char, "Enchanting materials by level")
+		card.noteTitle = title
+		card.noteText = card.noteTextMaterials
+		local rows = EnchantingMaterialRows(char, card.levelOrder)
+		RefreshEnchantingTiles(card, char)
+		if not rows then
+			ShowCardText(card, "No Enchanting materials recorded yet.")
+			return
+		end
+		if FillScrollingLines(card, rows, card.store, card.offsetField, title, 44) == 0 then
+			ShowCardText(card, "No Enchanting materials recorded yet.")
+		end
 		return
 	end
 	local names = MatrixProfessions(char)
 	local title = CharTitle(char, "Professions by level")
 	card.noteTitle = title
+	card.noteText = card.noteTextSkills
 	local rows, stats = SkillLevelRows(char, names, card.levelOrder)
 	RefreshLevelTiles(card, names, stats)
 	if not rows then

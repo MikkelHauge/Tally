@@ -69,6 +69,20 @@ local function IsQuestItem(itemID)
 	return ok and itemClass == "Quest" or false
 end
 
+-- A disenchant yields trade goods/reagents. When the cache can say what the
+-- item is, only those can be an Enchanting gain; when it cannot, the short
+-- disenchant window remains the fallback.
+local function IsEnchantingMaterial(itemID)
+	if not ItemInfoFn or type(itemID) ~= "number" then
+		return true
+	end
+	local ok, _, _, _, _, _, itemClass, itemSubClass = pcall(ItemInfoFn, itemID)
+	if not ok or not itemClass then
+		return true
+	end
+	return itemClass == "Trade Goods" or itemClass == "Reagent" or itemSubClass == "Enchanting"
+end
+
 -- Name, link, quality and vendor price for an item id, straight from the
 -- client's item cache. Returns nil when the client has not cached the item, so
 -- a caller can leave a value unlabelled rather than guessed; the price is the
@@ -481,6 +495,12 @@ local function OnLootMessage(text, looter)
 	if not text then
 		return
 	end
+	-- Some clients report a destroy on the loot channel rather than as a
+	-- system line.
+	if string.find(text, "^You destroy") then
+		ns.NoteDestroyedMessage(text)
+		return
+	end
 	local own = string.find(text, "^You receive loot")
 	if not own and looter then
 		local player = UnitName("player")
@@ -506,6 +526,133 @@ local function OnLootMessage(text, looter)
 		ns.Trace("loot message without colour: "..string.gsub(text, "|", "^"))
 	end
 	NoteLoot(itemID, linkName, quality, count)
+	-- A material looted inside the disenchant window is also a profession
+	-- gain, and is counted as crafted Enchanting output.
+	if ns.NoteEnchantingGain and IsEnchantingMaterial(itemID) then
+		ns.NoteEnchantingGain(itemID, linkName, quality, count)
+	end
+end
+
+-- Destroyed items are kept separately from loot: nothing was gained, and the
+-- loot totals must not move. The client prints "You destroy [Item]." as a
+-- system message; UI_INFO_MESSAGE is the fallback on clients that use it.
+local lastMessageDestroyKey, lastMessageDestroyAt
+local lastCursorDestroyKey, lastCursorDestroyAt
+local destroyMessagesSeen = false
+local lastCursorItem
+
+local function NoteDestroyed(itemID, name, quality, count, source)
+	local char = ns.GetChar()
+	if not char or not ns.Tracks("loot") then
+		return
+	end
+	if ns.IsEnchantingGainWindow and ns.IsEnchantingGainWindow() then
+		ns.Trace("destroyed: ignored during an enchant gain window")
+		return
+	end
+	name = name or (itemID and select(1, ns.ItemInfo(itemID))) or "?"
+	if not itemID and ns.ItemIDForName then
+		local ok, found = pcall(ns.ItemIDForName, name)
+		if ok then
+			itemID = found
+		end
+	end
+	if not quality and itemID then
+		quality = select(3, ns.ItemInfo(itemID))
+	end
+	quality = tonumber(quality) or 1
+	count = math.max(1, tonumber(count) or 1)
+	local now = Now()
+	local key = tostring(itemID or name)
+	-- The two message forms for one destroy arrive together; a cursor fallback
+	-- can also precede the message. Distinct destroys of the same item are
+	-- never suppressed, so there is no 3-second "one item only" limit.
+	if source == "message" then
+		if lastMessageDestroyKey == key and now - (lastMessageDestroyAt or 0) < 0.5 then
+			return
+		end
+		if lastCursorDestroyKey == key and now - (lastCursorDestroyAt or 0) < 2 then
+			lastMessageDestroyKey, lastMessageDestroyAt = key, now
+			return
+		end
+		lastMessageDestroyKey, lastMessageDestroyAt = key, now
+	else
+		lastCursorDestroyKey, lastCursorDestroyAt = key, now
+	end
+	local loot = char.loot
+	local destroyed = loot.destroyed
+	if type(destroyed) ~= "table" then
+		destroyed = {}
+		loot.destroyed = destroyed
+	end
+	destroyed.items = (tonumber(destroyed.items) or 0) + count
+	destroyed.firstAt = destroyed.firstAt or now
+	destroyed.lastAt = now
+	if type(destroyed.quality) ~= "table" then
+		destroyed.quality = {}
+	end
+	destroyed.quality[quality] = (tonumber(destroyed.quality[quality]) or 0) + count
+	if type(destroyed.itemCounts) ~= "table" then
+		destroyed.itemCounts = {}
+	end
+	local tally = destroyed.itemCounts[key]
+	if type(tally) ~= "table" then
+		tally = { name = name, itemID = itemID, quality = quality, count = 0, firstAt = now }
+		destroyed.itemCounts[key] = tally
+	end
+	tally.name = tally.name or name
+	tally.itemID = tally.itemID or itemID
+	tally.quality = tally.quality or quality
+	tally.count = (tonumber(tally.count) or 0) + count
+	tally.lastAt = now
+	ns.Trace("destroyed: "..tostring(name).." x"..count)
+end
+
+function ns.NoteDestroyedMessage(text)
+	if type(text) ~= "string" then
+		return
+	end
+	local plain = string.lower(ns.StripColors(text))
+	if not string.find(plain, "you destroy", 1, true)
+		and not string.find(plain, "destroyed", 1, true) then
+		return
+	end
+	ns.Trace("destroyed text: "..string.gsub(text, "|", "^"))
+	local itemID = tonumber(string.match(text, "|Hitem:(%d+)"))
+	local linkName = string.match(text, "%[([^%]]+)%]")
+	local color = string.match(text, "|c(%x%x%x%x%x%x%x%x)|H")
+	local quality = color and QUALITY_BY_COLOR[string.lower(color)] or nil
+	local count = tonumber(string.match(text, "|h|r%s*x(%d+)")) or 1
+	if not linkName then
+		-- Some clients name the item without an item link or brackets.
+		local plainName = string.match(ns.StripColors(text), "[Yy]ou destroy%s+(.+)")
+		if plainName then
+			plainName = string.gsub(plainName, "|H.-|h", "")
+			plainName = string.gsub(plainName, "|h", "")
+			plainName = string.gsub(plainName, "%.%s*$", "")
+			plainName = string.match(plainName, "^%s*(.-)%s*$") or plainName
+			if plainName ~= "" then
+				linkName = plainName
+			end
+		end
+	end
+	if not linkName and itemID then
+		linkName = select(1, ns.ItemInfo(itemID))
+	end
+	if not itemID and linkName and ns.ItemIDForName then
+		local ok, found = pcall(ns.ItemIDForName, linkName)
+		if ok then
+			itemID = found
+		end
+	end
+	if not itemID and not linkName then
+		ns.Trace("destroyed message without an item: "..string.gsub(text, "|", "^"))
+		return
+	end
+	-- The client does print destroy lines. From here on the cursor fallback
+	-- stays out of the way; the message is authoritative for every destroy.
+	destroyMessagesSeen = true
+	NoteDestroyed(itemID, linkName, quality, count, "message")
 end
 
 local function ResolvePendingLoot()
@@ -532,6 +679,94 @@ end
 ns.OnLootMessage = OnLootMessage
 ns.ResolvePendingLoot = ResolvePendingLoot
 
+function ns.LootDebug()
+	local char = ns.GetChar()
+	local destroyed = char and char.loot and char.loot.destroyed or {}
+	local kinds = 0
+	for _ in pairs(destroyed.itemCounts or {}) do
+		kinds = kinds + 1
+	end
+	return "loot: destroyed="..tostring(destroyed.items or 0)..", kinds="..kinds
+		..", destroyMessagesSeen="..tostring(destroyMessagesSeen)
+		..", cursorItem="..(lastCursorItem and tostring(lastCursorItem.id or lastCursorItem.name) or "nil")
+end
+
+-- Clients that report a destroy through UI_INFO_MESSAGE rather than chat.
+ns.On("UI_INFO_MESSAGE", function(_, _, message)
+	if type(message) == "string" then
+		ns.NoteDestroyedMessage(message)
+	end
+end, "Loot")
+
+-- Last-resort destroy path: remember the item on the cursor, then record it
+-- when the client's delete function is used. The chat message normally gets
+-- there first; the two-second dedupe in NoteDestroyed keeps them apart.
+ns.On("UPDATE_CURSOR", function()
+	if type(GetCursorInfo) ~= "function" then
+		return
+	end
+	local kind, itemID, itemLink = GetCursorInfo()
+	if kind == "item" and type(itemID) == "number" then
+		lastCursorItem = { id = itemID, link = itemLink }
+	end
+end, "Loot")
+
+if type(DeleteCursorItem) == "function" and type(hooksecurefunc) == "function" then
+	pcall(hooksecurefunc, "DeleteCursorItem", function()
+		-- Only for clients that never print a destroy line. Once one has been
+		-- seen, the message path is authoritative and there is no time limit
+		-- on how often items may be destroyed.
+		if destroyMessagesSeen then
+			return
+		end
+		local item = lastCursorItem
+		lastCursorItem = nil
+		if not item then
+			ns.Trace("destroyed: DeleteCursorItem without a cached item")
+			return
+		end
+		local link = item.link
+		local itemID = item.id or tonumber(type(link) == "string" and string.match(link, "item:(%d+)") or nil)
+		local name = item.name
+		if not name and type(link) == "string" then
+			name = string.match(link, "%[([^%]]+)%]")
+		end
+		local color = type(link) == "string" and string.match(link, "|c(%x%x%x%x%x%x%x%x)|H") or nil
+		local quality = color and QUALITY_BY_COLOR[string.lower(color)] or nil
+		NoteDestroyed(itemID, name, quality, 1, "cursor")
+	end)
+end
+
+-- The confirmation popup is another chance to learn which item is about to be
+-- deleted, on clients where the item is not left on the cursor.
+if type(StaticPopup_Show) == "function" and type(hooksecurefunc) == "function" then
+	pcall(hooksecurefunc, "StaticPopup_Show", function(which, textArg1, textArg2, data)
+		if which ~= "DELETE_ITEM" and which ~= "DELETE_GOOD_ITEM" then
+			return
+		end
+		if type(GetCursorInfo) == "function" then
+			local kind, itemID, itemLink = GetCursorInfo()
+			if kind == "item" and type(itemID) == "number" then
+				lastCursorItem = { id = itemID, link = itemLink }
+				return
+			end
+		end
+		local values = { textArg1, textArg2, data }
+		for index = 1, #values do
+			local value = values[index]
+			if type(value) == "string" then
+				local id = tonumber(string.match(value, "item:(%d+)"))
+				local name = string.match(value, "%[([^%]]+)%]")
+				if id or name then
+					lastCursorItem = { id = id, link = value, name = name }
+					ns.Trace("destroyed: delete popup cached "..tostring(id or name))
+					return
+				end
+			end
+		end
+	end)
+end
+
 -- Item values still waiting for the client's item cache belong to the
 -- character that looted them; a character switch must not resolve them into
 -- the next character's totals.
@@ -549,6 +784,7 @@ ns.loot.ItemIDForName = ns.ItemIDForName
 ns.loot.BagItemIndex = ns.BagItemIndex
 ns.loot.TallyCount = ns.LootTallyCount
 ns.loot.OnMessage = ns.OnLootMessage
+ns.loot.NoteDestroyedMessage = ns.NoteDestroyedMessage
 ns.loot.ResolvePending = ns.ResolvePendingLoot
 ns.loot.ResolvePendingFor = ns.ResolvePendingLootFor
 ns.loot.ClearPending = ns.ClearPendingLoot

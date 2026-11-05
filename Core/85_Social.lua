@@ -581,7 +581,8 @@ local function CountSentChat(chatType, targetName, source)
 		if combo then
 			RememberName(targetName, combo)
 		end
-		ns.Trace("whisper sent to "..tostring(SafeString(targetName) or "?").."; combo="..tostring(combo))
+		ns.Trace("whisper sent to "..tostring(SafeString(targetName) or "?")
+			.."; combo="..tostring(combo).."; "..tostring(source or "?"))
 		AddCombo(social.whispers.sentCombos, combo)
 		return
 	end
@@ -835,6 +836,12 @@ local function OnWhisperReceived(event, text, author, ...)
 	end
 	ns.Trace("whisper received from "..tostring(SafeString(author) or "?").."; combo="..tostring(combo))
 	AddCombo(social.whispers.receivedCombos, combo)
+end
+
+-- The outgoing quiet twin: these events fire for a whisper the player sent.
+-- They are the event-path fallback when the send hook cannot see it.
+local function OnWhisperSent(event, _, target)
+	CountSentChat("WHISPER", target, "echo")
 end
 
 -- ---------------------------------------------------------------------------
@@ -1487,6 +1494,8 @@ end
 
 ns.On("CHAT_MSG_WHISPER", OnWhisperReceived, "Social")
 ns.On("CHAT_MSG_BN_WHISPER", OnWhisperReceived, "Social")
+ns.On("CHAT_MSG_WHISPER_INFORM", OnWhisperSent, "Social")
+ns.On("CHAT_MSG_BN_WHISPER_INFORM", OnWhisperSent, "Social")
 -- A second, event-based path for clients where the send hook cannot see the
 -- player's own chat. CountSentChat deduplicates the two.
 for event in pairs(CHAT_ECHO_TYPES) do
@@ -1551,15 +1560,21 @@ function ns.SocialChatDebug()
 	local social = char and char.social
 	local chat = social and social.chat or {}
 	local guild = social and social.guild or {}
+	local whispers = social and social.whispers or {}
 	local byGuild = chat.byGuild or {}
 	local current = guild.name and (tonumber(byGuild[guild.name]) or 0) or 0
 	local now = (GetTime and GetTime()) or 0
 	local source = lastChatSource["guild"] or "none"
 	local age = lastChatAt["guild"] and math.floor(now - lastChatAt["guild"]) or -1
+	local whisperSource = lastChatSource["whisper"] or "none"
+	local whisperAge = lastChatAt["whisper"] and math.floor(now - lastChatAt["whisper"]) or -1
 	return "chat: guild="..tostring(chat.guild or 0)
 		..", currentGuild="..tostring(guild.name).." ("..current..")"
 		..", lastSend="..source.." "..age.."s ago"
 		..", echoGuildEvents="..echoGuildSeen
+		.."; whispers sent="..tostring(whispers.sent or 0)
+		..", received="..tostring(whispers.received or 0)
+		..", lastSent="..whisperSource.." "..whisperAge.."s ago"
 end
 
 ns.social = {

@@ -210,11 +210,7 @@ local function BuildPlaytimeReport(char, lines)
 	lines[#lines + 1] = Label("Tracked by Tally:").." "..FormatDuration(char.tracked).." over "..char.sessions.count.." sessions"
 	lines[#lines + 1] = Label("Alive time:").." "..FormatDuration(char.alive)..GRAY.." ("..Percent(char.alive, char.tracked).."% of tracked)|r"
 	if (char.afk or 0) > 0 then
-		if ns.db.settings.excludeAfk then
-			lines[#lines + 1] = Label("AFK:").." "..FormatDuration(char.afk)..GRAY.." (left out of tracked time)|r"
-		else
-			lines[#lines + 1] = Label("AFK:").." "..FormatDuration(char.afk)..GRAY.." ("..Percent(char.afk, char.tracked).."% of tracked; can overlap alive and dead)|r"
-		end
+		lines[#lines + 1] = Label("AFK:").." "..FormatDuration(char.afk)..GRAY.." ("..Percent(char.afk, char.tracked).."% of tracked; can overlap alive and dead)|r"
 	end
 	if char.sessions.count > 0 then
 		lines[#lines + 1] = Label("Session time:").." "..FormatDuration(char.sessions.seconds)..GRAY.." (longest "..FormatDuration(char.sessions.longest)..", average "..FormatDuration(math.floor(char.sessions.seconds / char.sessions.count))..")|r"
@@ -363,11 +359,7 @@ local function BuildCombatReport(char, lines)
 	lines[#lines + 1] = Label("Out of combat:").." "..FormatDuration(outOfCombat)..GRAY.." ("..Percent(outOfCombat, char.tracked).."% of tracked time)|r"
 	local afk = char.afk or 0
 	if afk > 0 then
-		if ns.db.settings.excludeAfk then
-			lines[#lines + 1] = Label("AFK:").." "..FormatDuration(afk)..GRAY.." (left out of tracked time)|r"
-		else
-			lines[#lines + 1] = Label("AFK:").." "..FormatDuration(afk)..GRAY.." ("..Percent(afk, char.tracked).."% of tracked time; can overlap the figures above)|r"
-		end
+		lines[#lines + 1] = Label("AFK:").." "..FormatDuration(afk)..GRAY.." ("..Percent(afk, char.tracked).."% of tracked time; can overlap the figures above)|r"
 	end
 	if combat.killsHeard or combat.logHeard then
 		lines[#lines + 1] = Label("Kills:").." "..FormatNumber(combat.kills)..GRAY.." ("..ns.CountTable(combat.killTypes).." creature types)|r"
@@ -739,7 +731,6 @@ function ns.BuildDebugText()
 	lines[#lines + 1] = "playedSyncBlocked = "..tostring(ns.db.settings.playedSyncBlocked)
 	lines[#lines + 1] = "copyDirect = "..tostring(ns.db.settings.copyDirect)
 	lines[#lines + 1] = "levelEstimate = "..tostring(ns.db.settings.levelEstimate)
-	lines[#lines + 1] = "excludeAfk = "..tostring(ns.db.settings.excludeAfk)
 	lines[#lines + 1] = "combatLogRead = "..tostring(ns.db.settings.combatLogRead)
 	lines[#lines + 1] = "track: playtime="..tostring(ns.Tracks("playtime"))..", economy="..tostring(ns.Tracks("economy"))..", combat="..tostring(ns.Tracks("combat"))..", loot="..tostring(ns.Tracks("loot"))..", explore="..tostring(ns.Tracks("explore"))
 	lines[#lines + 1] = "repair: quote="..tostring(repairWatch.cost)..", quoteBlocked="..tostring(repairWatch.blocked)..", buttonAt="..tostring(repairWatch.paidAt)..", inRepairMode="..tostring(RepairModeLive())

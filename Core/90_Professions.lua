@@ -189,6 +189,13 @@ local function EnsureProfessions(char)
 	if type(store.cooldownStats) ~= "table" then
 		store.cooldownStats = {}
 	end
+	if type(store.disenchants) ~= "table" then
+		store.disenchants = { count = 0 }
+	end
+	store.disenchants.count = tonumber(store.disenchants.count) or 0
+	if type(store.enchantingByLevel) ~= "table" then
+		store.enchantingByLevel = {}
+	end
 	CleanCraftTally(store)
 	return store
 end
@@ -1826,6 +1833,119 @@ local function SpellName(spellID)
 	return nil
 end
 
+-- Disenchanting is a profession action but not a recipe craft. A successful
+-- cast opens a short window in which the materials the client loots belong to
+-- Enchanting; they are counted as crafted output for the profession.
+local DISENCHANT_SPELL_ID = 13262
+local enchantingGainUntil = 0
+
+local function HasEnchanting(store)
+	for _, skill in ipairs(type(store) == "table" and store.skills or {}) do
+		if type(skill) == "table" and (tonumber(skill.rank) or 0) > 0
+			and CanonicalProfessionName(skill.name) == "Enchanting" then
+			return true
+		end
+	end
+	return false
+end
+
+local function IsDisenchantSpell(spellID)
+	if tonumber(spellID) == DISENCHANT_SPELL_ID then
+		return true
+	end
+	local name = SpellName(spellID)
+	return type(name) == "string" and string.lower(name) == "disenchant"
+end
+
+-- Returns true when the spell was a Disenchant, so the normal craft counter
+-- does not also try to read it as a recipe.
+local function NoteDisenchantCast(spellID)
+	if not IsDisenchantSpell(spellID) then
+		return false
+	end
+	if not ns.Tracks("economy") then
+		return true
+	end
+	local char = ns.GetChar()
+	if not char then
+		return true
+	end
+	local store = EnsureProfessions(char)
+	if not HasEnchanting(store) then
+		return true
+	end
+	local at = Now()
+	local stats = store.disenchants
+	stats.count = (tonumber(stats.count) or 0) + 1
+	stats.firstAt = stats.firstAt or at
+	stats.lastAt = at
+	stats.updatedAt = at
+	enchantingGainUntil = at + 3
+	ns.Trace("disenchant: cast succeeded; gain window open ("
+		..tostring(SpellName(spellID) or spellID)..")")
+	return true
+end
+
+function ns.IsEnchantingGainWindow()
+	return Now() <= enchantingGainUntil
+end
+
+-- Called by the loot module for an item looted while the disenchant window is
+-- open. It is counted exactly like a crafted Enchanting item, and also kept
+-- under the character level it happened at for the by-level materials view.
+function ns.NoteEnchantingGain(itemID, name, quality, count)
+	if not name or Now() > enchantingGainUntil or not ns.Tracks("economy") then
+		return false
+	end
+	local char = ns.GetChar()
+	if not char then
+		return false
+	end
+	local store = EnsureProfessions(char)
+	if not HasEnchanting(store) then
+		return false
+	end
+	count = math.max(1, tonumber(count) or 1)
+	local at = Now()
+	store.crafts["Enchanting"] = (store.crafts["Enchanting"] or 0) + count
+	local tally = store.crafted[name]
+	if type(tally) ~= "table" then
+		tally = {
+			name = name, itemID = itemID, quality = quality, count = 0,
+			profession = "Enchanting", source = "disenchant",
+			firstAt = at, lastAt = at, updatedAt = at,
+			evidence = "disenchant_loot",
+		}
+		store.crafted[name] = tally
+	end
+	tally.count = (tonumber(tally.count) or 0) + count
+	tally.profession = tally.profession or "Enchanting"
+	tally.source = tally.source or "disenchant"
+	tally.itemID = itemID or tally.itemID
+	tally.quality = quality or tally.quality
+	tally.firstAt = tally.firstAt or at
+	tally.lastAt = at
+	tally.updatedAt = at
+	local level = (type(UnitLevel) == "function" and UnitLevel("player")) or char.level or 0
+	level = tonumber(level) or 0
+	if level > 0 then
+		local row = store.enchantingByLevel[level]
+		if type(row) ~= "table" then
+			row = {}
+			store.enchantingByLevel[level] = row
+		end
+		row[name] = (tonumber(row[name]) or 0) + count
+	end
+	if ns.NoteCraftMilestone then
+		ns.NoteCraftMilestone(char)
+	end
+	if ns.Touch then
+		ns.Touch(char, "professions.crafts.Enchanting", at)
+	end
+	ns.Trace("enchanting gain: "..name.." x"..count.." at level "..level)
+	return true
+end
+
 -- Records a successful cast made while a profession window is open. The
 -- spell counts as a craft only when it is one of that window's recipes
 -- (ordinary spells can be cast with the window open, so the recipe list is
@@ -2411,7 +2531,10 @@ local function HandleProfessionEvent(event, ...)
 			if tradeSkillOpen or craftOpen then
 				ns.Trace("cast succeeded with a profession window open: "..tostring(SpellName(spellID) or spellID))
 			end
-			CountCraft(spellID)
+			local disenchant = NoteDisenchantCast(spellID)
+			if not disenchant then
+				CountCraft(spellID)
+			end
 			pendingCraftSpell = nil
 			pendingCraftName = nil
 		end
@@ -2419,10 +2542,18 @@ local function HandleProfessionEvent(event, ...)
 		-- Not counted, since a "sent" cast can still fail; traced so the
 		-- log shows which of the two events this game reports crafts on.
 		local unit = ...
-		if unit == "player" and (tradeSkillOpen or craftOpen) then
-			local arguments = select("#", ...)
-			local spellID = select(arguments, ...)
-			ns.Trace("cast sent with a profession window open: "..tostring(SpellName(spellID) or spellID))
+		local arguments = select("#", ...)
+		local spellID = select(arguments, ...)
+		if unit == "player" then
+			-- Open the gain window before the cast finishes: the loot line can
+			-- arrive just before UNIT_SPELLCAST_SUCCEEDED.
+			if IsDisenchantSpell(spellID) then
+				enchantingGainUntil = Now() + 3
+				ns.Trace("disenchant: cast sent; gain window open")
+			end
+			if tradeSkillOpen or craftOpen then
+				ns.Trace("cast sent with a profession window open: "..tostring(SpellName(spellID) or spellID))
+			end
 		end
 	end
 end
@@ -2561,6 +2692,8 @@ ns.professions.CountCraft = ns.CountCraft
 ns.professions.CountCraftedItem = ns.CountCraftedItem
 ns.professions.NoteCraftMessage = ns.NoteCraftMessage
 ns.professions.NoteLearnedRecipe = ns.NoteLearnedRecipe
+ns.professions.IsEnchantingGainWindow = ns.IsEnchantingGainWindow
+ns.professions.NoteEnchantingGain = ns.NoteEnchantingGain
 ns.professions.IsEvent = ns.IsProfessionEvent
 ns.professions.HandleEvent = ns.HandleProfessionEvent
 ns.ProfessionSecondary = SECONDARY_PROFESSIONS

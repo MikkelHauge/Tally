@@ -1,8 +1,8 @@
 -- Tally - the Loot tab's Crafted view: the items this character made.
 --
--- Only char.professions.crafted feeds this page. Looted items and gathered
--- materials never appear here, and a craft counted by the profession module is
--- counted once however the client reported it.
+-- Only char.professions.crafted feeds this page. Looted and gathered items
+-- never appear here; materials gained by disenchanting are added to the same
+-- crafted tally as Enchanting output, because that is how Tally counts them.
 local addonName, ns = ...
 
 local ACCENT, VALUE_COLOR, CreateListCard, CreateTileRow, SetTile,
@@ -362,7 +362,7 @@ local function BuildLootCrafted(frame)
 	local items = CreateListCard(frame, 0, -88, 730, 338, "Crafted")
 	craftedWidgets.items = items
 	AddCardTitleNote(items, "Crafted",
-		"Every item this character has crafted, grouped under the profession that made it. Each heading shows the profession's total; the items below show how many of each were made. Only crafts count here: looted and gathered items are never added. The corner button orders the items inside each profession by most crafted, most valuable or A-Z.")
+		"Every item this character has crafted, plus the materials gained by disenchanting, grouped under the profession that produced it. Each heading shows the profession's total; the items below show how many of each were made or gained. Looted and gathered items are never added. The corner button orders the items inside each profession by most crafted, most valuable or A-Z.")
 	AddCardBehaviour(items, "itemsOffset")
 
 	local sortButton = CreateCornerButton(items)

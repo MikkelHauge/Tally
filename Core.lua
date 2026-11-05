@@ -478,10 +478,6 @@ local DEFAULTS = {
 		-- combines them into one line. The corner button on the graph flips
 		-- it; nothing is stored per character.
 		graphCombined = false,
-		-- Off by default: AFK time counts as played time, so tracked time
-		-- stays close to the server's own /played figure. Ticking this
-		-- counts only time at the keyboard instead.
-		excludeAfk = false,
 		-- One switch per primary tab, all on. A tab switched off stops being
 		-- recorded for every character; nothing already stored is removed.
 		track = {
@@ -848,6 +844,10 @@ local function EnsureCharShape(char)
 	if type(char.loot.quality) ~= "table" then char.loot.quality = {} end
 	if type(char.loot.best) ~= "table" then char.loot.best = {} end
 	if type(char.loot.itemCounts) ~= "table" then char.loot.itemCounts = {} end
+	if type(char.loot.destroyed) ~= "table" then char.loot.destroyed = {} end
+	char.loot.destroyed.items = tonumber(char.loot.destroyed.items) or 0
+	if type(char.loot.destroyed.quality) ~= "table" then char.loot.destroyed.quality = {} end
+	if type(char.loot.destroyed.itemCounts) ~= "table" then char.loot.destroyed.itemCounts = {} end
 	if type(char.explore) ~= "table" then
 		char.explore = {}
 	end
@@ -1662,6 +1662,15 @@ local function OnTimePlayedMsg(totalTime, levelTime)
 	played.levelTime = levelTime
 	played.level = level
 	played.at = now
+	-- Tally's own clock at the moment of the reply. It counts logged-in time,
+	-- AFK included, so the Playtime tab can add the time since this reading
+	-- and stay in step with what the client's next reply will say. Offline
+	-- time never enters this counter, so a logout cannot inflate it. A reply
+	-- without the per-level figure keeps the previous anchor: its level time
+	-- is the older reading, so the time since *that* reading must still count.
+	if levelTimeKnown then
+		played.trackedAt = tonumber(char.tracked) or 0
+	end
 	char.level = level
 	if (char.highLevel or 0) < level then
 		char.highLevel = level
@@ -2350,7 +2359,7 @@ ns.CanReadMounted = CanReadMounted
 
 -- The 1-second tick: accumulates tracked time, alive time, session seconds,
 -- per-zone seconds, ground distance and flight time. AFK ticks count like
--- any other logged-in second unless the player asked to leave them out.
+-- any other logged-in second, matching the client's own /played figure.
 local function OnTickStep()
 	local char = ns.GetChar()
 	if not char then
@@ -2366,9 +2375,9 @@ local function OnTickStep()
 	local afk = (UnitIsAFK and UnitIsAFK("player")) and true or false
 	local session = char.sessions.current
 	if afk and ns.Tracks("playtime") then
-		-- AFK time is recorded even when it is left out of played time, so
-		-- the breakdown can name it. It can overlap the alive and dead
-		-- figures: a flagged player is still one or the other.
+		-- AFK time is recorded as its own figure rather than a separate
+		-- clock: it overlaps the played time, so a flagged player is still
+		-- alive or dead.
 		char.afk = (char.afk or 0) + 1
 		if ns.NoteAfkMilestone then
 			ns.NoteAfkMilestone(char.afk)
@@ -2379,9 +2388,6 @@ local function OnTickStep()
 		if session then
 			session.afk = (session.afk or 0) + 1
 		end
-	end
-	if afk and ns.db.settings.excludeAfk then
-		return
 	end
 	local now = Now()
 	local dead = UnitIsDeadOrGhost and UnitIsDeadOrGhost("player")
@@ -3148,11 +3154,14 @@ function ns.LevelPoints(char)
 			end
 		end
 	end
-	-- A level-up recorded before its /played reading arrived still gets a row,
-	-- marked as a hole rather than dropped from the list entirely.
+	-- A level-up recorded before its /played reading arrived still gets a row.
+	-- If Tally watched the level itself, its own sampled seconds are the
+	-- fallback; otherwise it stays a hole rather than an invented number.
+	-- This also covers a fast level-up whose reply was superseded: the level
+	-- is not lost just because the client reading is missing.
 	for index = 1, #history do
 		local entry = history[index]
-		if entry.at and entry.level and not entry.total then
+		if entry.at and entry.level then
 			local already = false
 			for pointIndex = 1, #points do
 				if points[pointIndex].level == entry.level then
@@ -3161,7 +3170,13 @@ function ns.LevelPoints(char)
 				end
 			end
 			if not already then
-				AddGap(entry.level, entry.at)
+				local bucket = buckets[entry.level - 1]
+				local seconds = (bucket and bucket.seconds) or 0
+				if seconds > 0 then
+					AddPoint(entry.level, seconds, entry.at, true, true)
+				else
+					AddGap(entry.level, entry.at)
+				end
 			end
 		end
 	end
@@ -3171,6 +3186,32 @@ end
 -- Every known character's level-up points. With includeAll set, a character
 -- that is not ticked is returned as well, so the level-times chart can keep
 -- its legend entry and grey it out rather than losing the way back.
+function ns.LevelDebug()
+	local char = ns.GetChar()
+	if not char then
+		return "levels: no character"
+	end
+	local history = (char.levels and char.levels.history) or {}
+	local buckets = (char.xp and char.xp.byLevel) or {}
+	local parts = {}
+	for index = math.max(1, #history - 5), #history do
+		local entry = history[index]
+		if type(entry) == "table" then
+			parts[#parts + 1] = string.format("%s:%s/%s%s%s%s",
+				tostring(entry.level), tostring(entry.total), tostring(entry.levelTime),
+				entry.pending and "P" or "", entry.timingMissing and "M" or "", entry.gap and "G" or "")
+		end
+	end
+	local bucketParts = {}
+	local current = tonumber(char.level) or 0
+	for level = math.max(1, current - 3), current do
+		local bucket = buckets[level]
+		bucketParts[#bucketParts + 1] = level.."="..tostring(bucket and bucket.seconds or 0)
+	end
+	return "levels: current="..tostring(char.level)..", entries="..#history
+		..", xp="..table.concat(bucketParts, ",")..", "..table.concat(parts, " | ")
+end
+
 function ns.LevelSeries(includeAll)
 	local series = {}
 	local known = ns.KnownCharacters()
@@ -4005,6 +4046,12 @@ local function HandleSlash(message)
 		if ns.SocialChatDebug then
 			ns.Print(ns.SocialChatDebug())
 		end
+		if ns.LootDebug then
+			ns.Print(ns.LootDebug())
+		end
+		if ns.LevelDebug then
+			ns.Print(ns.LevelDebug())
+		end
 		if ns.AuctionDebugText then
 			ns.Print(ns.AuctionDebugText())
 		end
@@ -4123,6 +4170,10 @@ local function OnAddonLoad()
 	end
 	ns.db = TallyDB
 	ApplyDefaults(ns.db, DEFAULTS)
+	-- The AFK switch was removed: played time always counts time flagged
+	-- away, matching the client's /played. Clearing the old key keeps saved
+	-- variables tidy; historical figures are left exactly as recorded.
+	ns.db.settings.excludeAfk = nil
 	if (ns.db.version or 0) < 1 then
 		ns.db.version = 1
 	end
@@ -4634,7 +4685,10 @@ HandleTallyEvent = function(event, ...)
 		end
 	elseif event == "CHAT_MSG_LOOT" then
 		local text, looter = ...
-		if ns.Tracks("loot") then
+		-- The line also feeds Enchanting gains, so it is read when either
+		-- Loot or Economy is tracked; NoteLoot itself ignores it when Loot
+		-- is off.
+		if ns.Tracks("loot") or ns.Tracks("economy") then
 			ns.OnLootMessage(text, looter)
 		end
 		-- A craft is reported on the loot line on clients that do not send
@@ -4644,6 +4698,9 @@ HandleTallyEvent = function(event, ...)
 		end
 	elseif event == "CHAT_MSG_SYSTEM" then
 		local text = ...
+		if ns.NoteDestroyedMessage then
+			ns.NoteDestroyedMessage(text)
+		end
 		OnSystemMessage(text)
 		if ns.NoteCraftMessage then
 			ns.NoteCraftMessage(text)

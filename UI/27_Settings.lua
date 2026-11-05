@@ -186,14 +186,8 @@ local function BuildSettingsPage(page)
 	end, function(value)
 		ns.db.settings.levelEstimate = value
 	end, "Off by default. When Tally was not running for a stretch of levels, the game still measures that stretch as one total: this shares it equally between the levels inside it, draws the points faint and marks them (est.), and the filled seconds add back up to the game's own figure. A stretch Tally watched in full keeps its measured split. The levels before Tally's first reading are shared out too, assuming the character began at level 1; a class that begins above level 1 is left out.")
-	-- AFK time is counted by default, so tracked time and the server's
-	-- /played stay close. The switch is there for anyone who wants only the
-	-- time they were actually at the keyboard.
-	y = AddCheckboxRow(left, y, "Leave AFK time out of played time", function()
-		return ns.db.settings.excludeAfk
-	end, function(value)
-		ns.db.settings.excludeAfk = value
-	end, "Off by default: time flagged AFK still counts, so Tally's tracked time stays close to the server's /played figure. Tick it to count only time at the keyboard; XP per hour and session averages then ignore AFK as well.")
+	-- AFK time counts like any other logged-in second: Tally's clock stays
+	-- close to the server's /played, which is the authoritative figure.
 	local r = -4
 	-- One row per primary tab. The label names the tab; the hover says what
 	-- stops, since a narrow column cannot carry a note under every row.

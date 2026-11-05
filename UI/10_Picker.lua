@@ -40,17 +40,66 @@ do
 	local DAILY_PANEL_ROWS = 13
 
 	local DUPLICATE_COLORS = {
-		{ 0.95, 0.45, 0.15 },  -- orange
-		{ 0.35, 0.85, 0.95 },  -- sky
-		{ 0.95, 0.35, 0.60 },  -- pink
-		{ 0.70, 0.90, 0.35 },  -- lime
-		{ 0.60, 0.55, 0.95 },  -- violet
-		{ 0.95, 0.85, 0.35 },  -- yellow
-		{ 0.40, 0.75, 0.55 },  -- sea green
-		{ 0.90, 0.60, 0.90 },  -- orchid
-		{ 0.80, 0.80, 0.80 },  -- grey
-		{ 0.35, 0.60, 0.95 },  -- blue
+		{ 0.55, 0.55, 0.55 },  -- grey
+		{ 0.32, 0.32, 0.32 },  -- charcoal
+		{ 0.55, 0.38, 0.25 },  -- brown
+		{ 0.50, 0.45, 0.25 },  -- olive
+		{ 0.30, 0.42, 0.55 },  -- steel blue
+		{ 0.45, 0.20, 0.30 },  -- dark maroon
+		{ 0.46, 0.30, 0.55 },  -- plum
+		{ 0.15, 0.30, 0.30 },  -- dark teal
+		{ 0.52, 0.38, 0.18 },  -- dark amber
+		{ 0.35, 0.55, 0.35 },  -- forest
+		{ 0.35, 0.35, 0.55 },  -- dark periwinkle
+		{ 0.70, 0.45, 0.45 },  -- dusty rose
+		{ 0.25, 0.35, 0.48 },  -- navy
+		{ 0.68, 0.32, 0.20 },  -- rust
+		{ 0.45, 0.48, 0.30 },  -- sage
+		{ 0.42, 0.42, 0.42 },  -- slate grey
 	}
+
+	-- Every class colour the client knows. A duplicate of a class gets a
+	-- colour from the palette above only if it is not close to any of these,
+	-- so a second warrior can never be mistaken for a druid (or any other
+	-- class) in the graph.
+	local classColorCache
+	local function ClassColors()
+		if classColorCache then
+			return classColorCache
+		end
+		local list = {}
+		if RAID_CLASS_COLORS then
+			for _, info in pairs(RAID_CLASS_COLORS) do
+				local r, g, b
+				if info.GetRGB then
+					r, g, b = info:GetRGB()
+				else
+					r, g, b = info.r, info.g, info.b
+				end
+				if r and g and b then
+					list[#list + 1] = { r, g, b }
+				end
+			end
+		end
+		classColorCache = list
+		return list
+	end
+
+	local function ColorDistanceSq(a, b)
+		local dr, dg, db = a[1] - b[1], a[2] - b[2], a[3] - b[3]
+		return dr * dr + dg * dg + db * db
+	end
+
+	local MIN_CLASS_DISTANCE = 0.10
+
+	local function NearClassColor(candidate, classColors)
+		for index = 1, #classColors do
+			if ColorDistanceSq(candidate, classColors[index]) < MIN_CLASS_DISTANCE then
+				return true
+			end
+		end
+		return false
+	end
 
 	local function KeyHash(key)
 		local hash = 7
@@ -65,6 +114,15 @@ do
 	-- list both times it is used (the graph and the picker), so the two agree.
 	DailyColors = function(list)
 		local colors, classUsed = {}, {}
+		local classColors = ClassColors()
+		local function Used(candidate)
+			for _, used in pairs(colors) do
+				if used[1] == candidate[1] and used[2] == candidate[2] and used[3] == candidate[3] then
+					return true
+				end
+			end
+			return false
+		end
 		for index = 1, #list do
 			local member = list[index]
 			local char = member.char or {}
@@ -78,16 +136,20 @@ do
 				local start = (KeyHash(member.key) % #palette) + 1
 				for step = 0, #palette - 1 do
 					local candidate = palette[((start + step - 1) % #palette) + 1]
-					local taken = false
-					for _, used in pairs(colors) do
-						if used == candidate then
-							taken = true
-							break
-						end
-					end
-					if not taken then
+					if not Used(candidate) and not NearClassColor(candidate, classColors) then
 						color = candidate
 						break
+					end
+				end
+				if not color then
+					-- Every palette colour is used or too close to a class
+					-- colour. Prefer an unused one over a class-like one.
+					for step = 0, #palette - 1 do
+						local candidate = palette[((start + step - 1) % #palette) + 1]
+						if not Used(candidate) then
+							color = candidate
+							break
+						end
 					end
 				end
 				color = color or palette[start]
@@ -167,7 +229,7 @@ do
 	-- The window: one per selection group, with the same rows in every case
 	-- because the row builder is shared.
 	local PICKER_TITLE = "Characters"
-	local PICKER_NOTE = "Tick the characters to use. The same ticks apply everywhere: the combined figures, the economy graph and the level-times chart. Horde is on the left, Alliance on the right. Left-click a row to tick or untick it; the balance under the cursor is in the row's own tooltip."
+	local PICKER_NOTE = "Tick the characters to use. The same ticks apply everywhere: the combined figures, the economy graph and the level-times chart. Horde is on the left, Alliance on the right. Left-click a row to tick or untick it; the balance under the cursor is in the row's own tooltip. The first character of each class uses the class colour; another character of the same class gets a colour kept clear of every class colour."
 	local NOTIFY_TITLE = "Notification characters"
 	local NOTIFY_NOTE = "Tick the characters whose profession cooldowns should be notified. These ticks only affect profession notifications; they do not change the Total tab, the graphs or the auction. Horde is on the left, Alliance on the right."
 

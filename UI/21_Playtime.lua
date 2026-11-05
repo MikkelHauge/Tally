@@ -103,8 +103,9 @@ local function RefreshPlaytime()
 		local seconds = session.seconds or 0
 		local alive = math.min(session.alive or 0, seconds)
 		local dead = math.max(0, seconds - alive)
-		-- AFK is not clamped to the length: while the setting leaves AFK out
-		-- of played time, a session can hold more AFK than length.
+		-- AFK is not a fourth slice: it is time spent flagged away, and can
+		-- overlap alive and dead. The length counts it like any other
+		-- logged-in second, matching /played.
 		local afk = session.afk or 0
 		local inCombat = math.min(session.combatSeconds or 0, seconds)
 		local finish
@@ -116,8 +117,6 @@ local function RefreshPlaytime()
 		local note
 		if session.stop and session.endedObserved == false then
 			note = "The client did not report a logout; the length is a lower bound to the last tick."
-		elseif ns.db.settings.excludeAfk then
-			note = "AFK is counted here but left out of the length while the setting is on."
 		else
 			note = "AFK can overlap the other figures: it is time spent flagged away, alive or dead."
 		end
@@ -201,11 +200,39 @@ local function RefreshPlaytime()
 		-- worth showing.
 		detailParts[#detailParts + 1] = ns.FormatCompact(currentBucket.gained or 0).." XP in "..ns.FormatDuration(currentBucket.seconds, true)
 	end
-	if played.levelTime and played.levelTime >= 60 and (played.level or -1) == level then
-		-- The client's own /played for this level: a second measurement of
-		-- the same level, so it sits beside Tally's sample rather than
-		-- replacing it.
-		detailParts[#detailParts + 1] = ns.FormatDuration(played.levelTime).." on this level"
+	-- How long this level has been running on the client's own clock. A
+	-- /played reply is a checkpoint: its level time is exact when it was read,
+	-- and Tally's own clock supplies the time since then so the line moves
+	-- without another /played. That clock counts logged-in seconds, AFK
+	-- included, and never counts a logout; the next reply snaps the figure
+	-- back to the client's exact number. When no reply has covered this level,
+	-- Tally's own sample is the only figure there is.
+	local liveLevelTime
+	if played.levelTime and (played.level or -1) == level then
+		liveLevelTime = played.levelTime
+		if not viewing then
+			local gained
+			if played.trackedAt then
+				gained = (tonumber(char.tracked) or 0) - played.trackedAt
+			elseif played.at then
+				-- An older save without the checkpoint counter: use the wall
+				-- clock, capped so a logout before this session is not added.
+				local session = char.sessions and char.sessions.current
+				gained = math.max(0, ns.Now() - played.at)
+				if session then
+					gained = math.min(gained, session.seconds or 0)
+				end
+			end
+			if gained and gained > 0 then
+				liveLevelTime = liveLevelTime + gained
+			end
+		end
+	end
+	if liveLevelTime and liveLevelTime >= 60 then
+		-- The client's own /played for this level plus the live part since
+		-- it was read, so it sits beside Tally's sample rather than replacing
+		-- it.
+		detailParts[#detailParts + 1] = ns.FormatDuration(liveLevelTime).." on this level"
 	end
 	local levelRight = tostring(level)
 	if percent then
@@ -227,11 +254,10 @@ local function RefreshPlaytime()
 	local newestPoint = levelPoints[#levelPoints]
 	local currentStart = newestPoint and newestPoint.at or (char.firstSeen and char.firstSeen.observed == "live" and char.firstSeen.at) or char.created
 	-- How long this level has been running: the client's own /played figure
-	-- when it is for this level, otherwise Tally's sample of the same level.
-	local soFar
-	if played.levelTime and played.levelTime >= 60 and (played.level or -1) == level then
-		soFar = played.levelTime
-	elseif currentBucket and (currentBucket.seconds or 0) > 0 then
+	-- (with the live part added, as above) when it is for this level,
+	-- otherwise Tally's sample of the same level.
+	local soFar = liveLevelTime
+	if soFar == nil and currentBucket and (currentBucket.seconds or 0) > 0 then
 		soFar = currentBucket.seconds
 	end
 		levelEntries[#levelEntries + 1] = {

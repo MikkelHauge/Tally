@@ -45,16 +45,6 @@ local function AddHeader(lines, title)
 	lines[#lines + 1] = { left = title, leftColor = ACCENT }
 end
 
--- The same breathing room without a heading: used where a run of lines is
--- really its own category but carries its own labels (the whisper figures
--- inside Chat, for one).
-local function AddBreak(lines)
-	if #lines > 0 then
-		lines[#lines + 1] = { divider = true }
-		lines[#lines + 1] = {}
-	end
-end
-
 -- "Human Mage" with the class in its own colour: the class name is the tail
 -- of the stored combo, so the race stays plain and the class reads like a
 -- class anywhere else in the addon.
@@ -122,7 +112,7 @@ local function AddTotals(lines, char, social)
 	AddLine(lines, "Time in guild", Duration(guild.seconds))
 	AddLine(lines, "Time without a guild", Duration(guild.guildless))
 
-	AddHeader(lines, "Chat")
+	AddHeader(lines, "Public chat")
 	AddLine(lines, "Messages sent", ns.FormatNumber(socialChat.sent or 0))
 	for index = 1, #CHAT_ORDER do
 		local bucket = CHAT_ORDER[index]
@@ -131,7 +121,7 @@ local function AddTotals(lines, char, social)
 			AddLine(lines, "   "..bucket.label, ns.FormatNumber(count))
 		end
 	end
-	AddBreak(lines)
+	AddHeader(lines, "Whispers")
 	AddLine(lines, "Whispers sent", ns.FormatNumber(whispers.sent or 0))
 	AddLine(lines, "Whispers received", ns.FormatNumber(whispers.received or 0))
 

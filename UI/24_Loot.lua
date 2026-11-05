@@ -2,25 +2,16 @@
 local addonName, ns = ...
 
 -- Helpers and constants from the files loaded above (see Tally.toc).
-local ACCENT, TILE_WIDTH, TILE_HEIGHT, TILE_GAP, CreateTile, SetTile, CreateTileRow, DisplayChar, QUALITY_NAMES, QUALITY_COLORS, PercentText, QualityCode, ItemQuality, CreateListCard, ROW_STEP, FillCardRows, ShowCardText, ShortWhen, CutRowText, AddCardTitleNote, FillScrollingLines, MakeCardScrollable, pageRefresh =
-	ns.ACCENT, ns.TILE_WIDTH, ns.TILE_HEIGHT, ns.TILE_GAP, ns.CreateTile, ns.SetTile, ns.CreateTileRow, ns.DisplayChar, ns.QUALITY_NAMES, ns.QUALITY_COLORS, ns.PercentText, ns.QualityCode, ns.ItemQuality, ns.CreateListCard, ns.ROW_STEP, ns.FillCardRows, ns.ShowCardText, ns.ShortWhen, ns.CutRowText, ns.AddCardTitleNote, ns.FillScrollingLines, ns.MakeCardScrollable, ns.pageRefresh
+local ACCENT, TILE_WIDTH, TILE_HEIGHT, TILE_GAP, CreateTile, SetTile, CreateTileRow, DisplayChar, QUALITY_NAMES, QUALITY_COLORS, PercentText, QualityCode, ItemQuality, CreateListCard, ShowCardText, ShortWhen, CutRowText, AddCardTitleNote, AddCardScrollbar, FillScrollingLines, MakeCardScrollable, RowHoverTick, pageRefresh =
+	ns.ACCENT, ns.TILE_WIDTH, ns.TILE_HEIGHT, ns.TILE_GAP, ns.CreateTile, ns.SetTile, ns.CreateTileRow, ns.DisplayChar, ns.QUALITY_NAMES, ns.QUALITY_COLORS, ns.PercentText, ns.QualityCode, ns.ItemQuality, ns.CreateListCard, ns.ShowCardText, ns.ShortWhen, ns.CutRowText, ns.AddCardTitleNote, ns.AddCardScrollbar, ns.FillScrollingLines, ns.MakeCardScrollable, ns.RowHoverTick, ns.pageRefresh
 local BuildLootGathered, RefreshLootGathered = ns.BuildLootGathered, ns.RefreshLootGathered
 local BuildLootCrafted, RefreshLootCrafted = ns.BuildLootCrafted, ns.RefreshLootCrafted
 -------------------------------------------------------------------------------
 -- Loot page
 -------------------------------------------------------------------------------
 
-local lootWidgets = { tiles = {}, view = "value" }
+local lootWidgets = { tiles = {}, view = "value", qualityScrollOffset = 0 }
 local CreateCornerButton, SetCornerLabel = ns.CreateCornerButton, ns.SetCornerLabel
-
--- How many rows the loot card holds: FillCardRows draws
--- floor((height - 46) / ROW_STEP) of them, and the two blocks on the card
--- are laid out to fit that many exactly.
-local function LootCardRows()
-	local card = lootWidgets.quality
-	local step = card.rowStep or ROW_STEP
-	return math.max(1, math.floor((card:GetHeight() - 46) / step))
-end
 
 local function RefreshLoot()
 	if not lootWidgets.quality then
@@ -96,7 +87,8 @@ local function RefreshLoot()
 		}
 	end
 	-- The items looted most often, by count, ties read alphabetically so a
-	-- refresh does not shuffle them.
+	-- refresh does not shuffle them. A count that came from the top-40
+	-- sketch's inherited figure is shown as a lower bound.
 	local top = {}
 	for id, tally in pairs(loot.itemCounts or {}) do
 		local lower, estimated = ns.loot.TallyCount(tally)
@@ -108,13 +100,9 @@ local function RefreshLoot()
 		end
 		return a.count > b.count
 	end)
-	-- The card holds so many rows; the quality block is drawn in full, and
-	-- the five items take what is left of them. A count that came from the
-	-- top-40 sketch's inherited figure is shown as a lower bound.
-	local room = LootCardRows() - #entries - 1
-	if room > 0 and #top > 0 then
+	if #top > 0 then
 		entries[#entries + 1] = { left = "Top looted items:", leftColor = ACCENT }
-		for index = 1, math.min(5, room, #top) do
+		for index = 1, math.min(5, #top) do
 			local item = top[index]
 			local _, _, quality = ns.ItemInfo(item.id)
 			entries[#entries + 1] = {
@@ -124,7 +112,52 @@ local function RefreshLoot()
 			}
 		end
 	end
-	if FillCardRows(lootWidgets.quality, entries, 48) == 0 then
+	-- Destroyed items sit below the looted blocks. They are read from their
+	-- own subtree, so a destroyed item never changes the loot totals.
+	local destroyed = loot.destroyed or {}
+	local destroyedItems = tonumber(destroyed.items) or 0
+	if destroyedItems > 0 then
+		entries[#entries + 1] = { left = "Destroyed:", leftColor = ACCENT }
+		for quality = 6, 0, -1 do
+			local count = tonumber(destroyed.quality and destroyed.quality[quality]) or 0
+			if count > 0 then
+				local list = {}
+				for _, item in pairs(destroyed.itemCounts or {}) do
+					if (tonumber(item.quality) or 1) == quality then
+						list[#list + 1] = item
+					end
+				end
+				table.sort(list, function(a, b)
+					local ac, bc = tonumber(a.count) or 0, tonumber(b.count) or 0
+					if ac ~= bc then
+						return ac > bc
+					end
+					return tostring(a.name) < tostring(b.name)
+				end)
+				local tipLines = {}
+				for index = 1, math.min(8, #list) do
+					tipLines[#tipLines + 1] = {
+						text = (list[index].name or "?").." x"..ns.FormatNumber(list[index].count or 0),
+					}
+				end
+				if #tipLines == 0 then
+					tipLines[1] = { text = "No item names recorded for this quality." }
+				end
+				entries[#entries + 1] = {
+					left = QUALITY_NAMES[quality],
+					leftColor = QUALITY_COLORS[quality],
+					right = count.."  ·  "..PercentText(count, destroyedItems),
+					tip = {
+						kind = "note",
+						title = QUALITY_NAMES[quality].." items destroyed",
+						lines = tipLines,
+						key = "destroyedQuality|"..quality,
+					},
+				}
+			end
+		end
+	end
+	if FillScrollingLines(lootWidgets.quality, entries, lootWidgets, "qualityScrollOffset", "Looted", 48) == 0 then
 		ShowCardText(lootWidgets.quality, "No loot recorded yet.")
 	end
 
@@ -245,9 +278,22 @@ local function BuildLootContent(content)
 	lootWidgets.quality = CreateListCard(content, 0, -88, 359, 250, "Looted")
 	lootWidgets.best = CreateListCard(content, 371, -88, 359, 250, "Most valuable finds")
 	AddCardTitleNote(lootWidgets.quality, "Looted",
-		"Every item this character loots, by quality and then the five items looted most often; grey and quest items are left out of the ranking. Other players' loot lines are not counted.")
+		"Every item this character loots, by quality and then the five items looted most often; grey and quest items are left out of the ranking. Destroyed items are listed below in their own block. Other players' loot lines are not counted.")
 	AddCardTitleNote(lootWidgets.best, "Most valuable finds",
 		"The 50 most valuable items looted, priced at what a vendor would pay for one; the date is when it dropped. The corner button switches to the last 50 individual drops.")
+	-- The left card now carries a third block, so it scrolls like the right
+	-- one instead of truncating the looted list.
+	AddCardScrollbar(lootWidgets.quality, lootWidgets, "qualityScrollOffset", RefreshLoot)
+	MakeCardScrollable(lootWidgets.quality, lootWidgets, "qualityScrollOffset", RefreshLoot)
+	lootWidgets.quality:SetScript("OnUpdate", function()
+		RowHoverTick(lootWidgets.quality)
+	end)
+	lootWidgets.quality:SetScript("OnLeave", function()
+		lootWidgets.quality.hoverKey = nil
+		if GameTooltip:IsOwned(lootWidgets.quality) then
+			GameTooltip:Hide()
+		end
+	end)
 	-- The same card, two views: value and recency. It keeps its own scroll
 	-- position per view so switching back does not lose the place.
 	local viewButton = CreateCornerButton(lootWidgets.best)

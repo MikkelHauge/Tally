@@ -218,7 +218,7 @@ local function RefreshCombatFights()
 	if afk > 0 then
 		breakdown[#breakdown + 1] = { left = "" }
 		breakdown[#breakdown + 1] = {
-			left = ns.db.settings.excludeAfk and "AFK, outside the time above" or "AFK, within the time above",
+			left = "AFK, within the time above",
 			right = ns.FormatDuration(afk),
 			leftColor = CATEGORY_HEAD_COLOR,
 		}
