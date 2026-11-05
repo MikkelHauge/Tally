@@ -3158,10 +3158,12 @@ function ns.LevelPoints(char)
 	-- If Tally watched the level itself, its own sampled seconds are the
 	-- fallback; otherwise it stays a hole rather than an invented number.
 	-- This also covers a fast level-up whose reply was superseded: the level
-	-- is not lost just because the client reading is missing.
-	for index = 1, #history do
+	-- is not lost just because the client reading is missing. The first
+	-- reading is the point Tally started watching from, not a finished level:
+	-- there is no level below it to measure, so it is left out here.
+	for index = 2, #history do
 		local entry = history[index]
-		if entry.at and entry.level then
+		if entry.at and entry.level and entry.level > 1 then
 			local already = false
 			for pointIndex = 1, #points do
 				if points[pointIndex].level == entry.level then
@@ -3180,6 +3182,13 @@ function ns.LevelPoints(char)
 			end
 		end
 	end
+	-- The fallback rows above are appended while walking the history, so a
+	-- late level can sit after an earlier one. Every reader below assumes
+	-- points climb with level; sorting here keeps the card and the chart in
+	-- the same order.
+	table.sort(points, function(a, b)
+		return (a.level or 0) < (b.level or 0)
+	end)
 	return points
 end
 
