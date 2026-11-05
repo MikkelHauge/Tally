@@ -907,7 +907,10 @@ local function OnTradeShow()
 		return
 	end
 	social.trades.count = social.trades.count + 1
-	ns.Trace("trade opened; partner="..tostring(partner)..", combo="..tostring(lastTradeCombo))
+	ns.Trace("trade opened; partner="..tostring(partner)..", combo="..tostring(lastTradeCombo)
+		..", completeLine="..tostring(tradeCompleteWorks)
+		..", itemReader="..tostring(type(GetTradePlayerItemInfo) == "function"
+			or (C_TradeInfo and type(C_TradeInfo.GetTradePlayerItemInfo) == "function") or false))
 end
 
 -- Units on one side of the open trade. The slot info returns the stack size
@@ -1009,6 +1012,19 @@ local function OnTradeAccept(event, playerAccepted, targetAccepted)
 		-- fresh snapshot of what is actually on the table.
 		tradePending = nil
 	end
+	if tradePending then
+		ns.Trace("trade snapshot: given="..tostring(tradePending.itemsGiven)
+			..", received="..tostring(tradePending.itemsReceived))
+		local getPlayer = GetTradePlayerItemInfo
+			or (C_TradeInfo and C_TradeInfo.GetTradePlayerItemInfo)
+		if type(getPlayer) == "function" then
+			local ok, name, _, third, fourth = pcall(getPlayer, 1)
+			ns.Trace("trade slot 1 raw: ok="..tostring(ok)..", name="..tostring(name)
+				..", third="..tostring(third)..", fourth="..tostring(fourth))
+		else
+			ns.Trace("trade slot 1 raw: no item reader")
+		end
+	end
 end
 
 local function OnTradeClosed()
@@ -1021,6 +1037,8 @@ local function OnTradeClosed()
 	-- trade opens: the line can arrive just after the close. A refused trade
 	-- simply never gets one, so it stays uncounted. tradeCounted stays set
 	-- until the next trade so a repeated line cannot double count.
+	ns.Trace("trade closed; counted="..tostring(tradeCounted)
+		..", pending="..tostring(tradePending ~= nil))
 	tradeOpen = false
 	tradePlayerAccepted = false
 	tradeTargetAccepted = false
@@ -1043,11 +1061,50 @@ local function OnTradeMessage(event, text)
 	local complete = _G.ERR_TRADE_COMPLETE
 	if complete and secret == complete then
 		tradeCompleteWorks = true
+		ns.Trace("trade complete line; pending="..tostring(tradePending ~= nil)
+			..", open="..tostring(tradeOpen))
 		if tradePending or tradeOpen then
 			CountCompletedTrade(tradePending)
 			tradePending = nil
+		else
+			ns.Trace("trade complete line with no snapshot: items cannot be read now")
 		end
 	end
+end
+
+function ns.TradeDebug()
+	local char = ns.GetChar()
+	local social = char and char.social
+	local trades = (social and social.trades) or {}
+	local getPlayer = GetTradePlayerItemInfo
+		or (C_TradeInfo and C_TradeInfo.GetTradePlayerItemInfo)
+	local getTarget = GetTradeTargetItemInfo
+		or (C_TradeInfo and C_TradeInfo.GetTradeTargetItemInfo)
+	local function SideText(getter)
+		if type(getter) ~= "function" then
+			return "none"
+		end
+		local parts = {}
+		for slot = 1, TRADE_ITEM_SLOTS do
+			local ok, name, _, count, quality = pcall(getter, slot)
+			if ok and name then
+				parts[#parts + 1] = slot..":"..tostring(name)
+					.."/count="..tostring(count).."/quality="..tostring(quality)
+			end
+		end
+		return #parts > 0 and table.concat(parts, " | ") or "empty"
+	end
+	return "trades: completeLine="..tostring(tradeCompleteWorks)
+		..", reader="..tostring(type(getPlayer) == "function")
+		..", open="..tostring(tradeOpen)
+		..", accepted="..tostring(tradePlayerAccepted).."/"..tostring(tradeTargetAccepted)
+		..", windows="..tostring(trades.count or 0)
+		..", completed="..tostring(trades.completed or 0)
+		..", given="..tostring(trades.itemsGiven or 0)
+		..", received="..tostring(trades.itemsReceived or 0)
+		..", pending="..tostring(tradePending and tradePending.itemsGiven or 0)
+		.."; player1=["..SideText(getPlayer).."]"
+		.."; target1=["..SideText(getTarget).."]"
 end
 
 -- ---------------------------------------------------------------------------

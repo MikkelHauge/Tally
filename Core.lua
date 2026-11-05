@@ -1677,8 +1677,13 @@ local function OnTimePlayedMsg(totalTime, levelTime)
 	end
 
 	if pendingLevelSnapshot then
+		-- Only a reply that arrives while the level-up is still fresh may
+		-- announce it. A late reply, or a pending row recovered after a
+		-- reload, still finalises the record above but must not print a
+		-- "Level X reached" message long after the fact.
+		local announcementAge = now - (pendingLevelSnapshot.at or now)
 		pendingLevelSnapshot = nil
-		if ns.db.settings.announceLevelUps then
+		if ns.db.settings.announceLevelUps and announcementAge <= TUNING.levelReplyFor then
 			local totalText = ns.FormatDuration(totalTime).." played in total"
 			if finishedSeconds and finishedPartial then
 				ns.Print(string.format("Level %d reached - at least %s on level %d, %s.", level, ns.FormatDuration(finishedSeconds), finishedLevel, totalText))
@@ -4054,6 +4059,9 @@ local function HandleSlash(message)
 		ns.Print("social hooks: send="..tostring(ns.socialSendHooked)..", edit="..tostring(ns.socialEditHooked))
 		if ns.SocialChatDebug then
 			ns.Print(ns.SocialChatDebug())
+		end
+		if ns.TradeDebug then
+			ns.Print(ns.TradeDebug())
 		end
 		if ns.LootDebug then
 			ns.Print(ns.LootDebug())

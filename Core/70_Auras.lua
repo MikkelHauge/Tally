@@ -40,6 +40,12 @@ do
 	-- application, so a return or a refreshed expiration counts.
 	local AURA_REFRESH_MIN = 5
 	local AURA_REFRESH_MAX = 300
+	-- A permanent aura (no duration and no expiration) cannot really lapse
+	-- and come back in five seconds. Its reappearance counts as a new gain
+	-- only after this long, or when a death happened since it was last seen
+	-- and the player applied it again. This is what stops Find Minerals from
+	-- being counted on every short gap in the client's aura list.
+	local AURA_PERMANENT_AWAY = 300
 	local aurasAnnounced = false
 	local aurasScanFailed = false
 	local scanStartedAt = 0
@@ -565,14 +571,36 @@ do
 					auras.lastSeen = {}
 				end
 				auras.lastSeen[name] = now
-				local window = math.max(AURA_REFRESH_MIN, math.min(AURA_REFRESH_MAX, entry.duration or 0))
+				-- A permanent buff has no duration; it is not treated as a
+				-- five-second refresh. Its own long window applies, or a death
+				-- since it was last seen if the player applied it again.
+				local permanent = isBuffs and (not entry.duration or entry.duration <= 0)
+				local window
+				if permanent then
+					window = AURA_PERMANENT_AWAY
+				else
+					window = math.max(AURA_REFRESH_MIN, math.min(AURA_REFRESH_MAX, entry.duration or 0))
+				end
+				local away = now - lastSeen
+				local deathAt = 0
+				local deathCountedAt = 0
+				if permanent then
+					deathAt = tonumber(char and char.combat and char.combat.deathsLastAt) or 0
+					deathCountedAt = tonumber(auras.deathCountedAt) or 0
+				end
+				-- A death at or just after the last sighting means the buff
+				-- really went away and was applied again. The two-second grace
+				-- covers a scan that still saw the buff as the player died.
+				-- deathCountedAt is the last death this rule already used, so
+				-- one death cannot count the same buff several times.
+				local diedSinceSeen = permanent and deathAt > (lastSeen - 2) and deathAt > deathCountedAt
 				-- Gone means the miss rule has already let it drop; a buff is
 				-- a gain again only when it was away at least its own window.
 				-- A debuff that is gone and comes back is a new landing.
 				local wasGone = not seen[name]
 				local appeared
 				if isBuffs then
-					appeared = wasGone and (now - lastSeen) >= window
+					appeared = wasGone and (diedSinceSeen or away >= window)
 				else
 					appeared = wasGone
 				end
@@ -581,11 +609,17 @@ do
 					if lower == campBuff or lower == CAMP_BENEFITS then
 						ns.Trace(string.format("auras: %s %s (away %ds, window %ds)", name,
 							appeared and "gained" or "came back - a refresh, not a new gain",
-							math.floor(now - lastSeen), math.floor(window)))
+							math.floor(away), math.floor(window)))
+					elseif permanent and appeared then
+						ns.Trace(string.format("auras: permanent %s counted (away %ds, death %s)",
+							name, math.floor(away), diedSinceSeen and "yes" or "no"))
 					end
 				end
 				if appeared or refreshed then
 					entry.count = entry.count + 1
+					if diedSinceSeen then
+						auras.deathCountedAt = deathAt
+					end
 				end
 				entry.seconds = entry.seconds + 1
 				entry.lastAt = now

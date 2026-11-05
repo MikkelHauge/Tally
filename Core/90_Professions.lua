@@ -528,6 +528,39 @@ end
 -- Classic skill-line fallback both use it, because Classic has no
 -- GetProfessions/GetProfessionInfo. Existing first-seen stamps are kept; only
 -- the rank moves.
+-- Records the level at which a profession's skill ceiling was raised. The
+-- current maxRank alone cannot tell an old row what the cap was then; the
+-- by-level view uses this history where it exists and falls back to the rank
+-- path for records written before it was kept.
+local function NoteCapChange(skill, oldMax, newMax, at)
+	if type(skill) ~= "table" then
+		return
+	end
+	oldMax = tonumber(oldMax) or 0
+	newMax = tonumber(newMax) or 0
+	if newMax <= oldMax then
+		return
+	end
+	local level = (UnitLevel and UnitLevel("player"))
+		or (ns.GetChar() and ns.GetChar().level) or 0
+	local history = skill.capHistory
+	if type(history) ~= "table" then
+		history = {}
+		skill.capHistory = history
+	end
+	local last = history[#history]
+	if last and (tonumber(last.maxRank) or 0) == newMax then
+		return
+	end
+	history[#history + 1] = {
+		level = level, maxRank = newMax, at = at or Now(),
+	}
+end
+
+-- Writes one profession reading into the skill list. The window scans and the
+-- Classic skill-line fallback both use it, because Classic has no
+-- GetProfessions/GetProfessionInfo. Existing first-seen stamps are kept; only
+-- the rank moves.
 local function RecordSkillReading(char, name, rank, maxRank, evidence, observed)
 	if not char or not ns.Tracks("economy") then
 		return false
@@ -566,6 +599,9 @@ local function RecordSkillReading(char, name, rank, maxRank, evidence, observed)
 		if observed ~= "login" and type(found.rank) == "number" and rank > found.rank then
 			NoteSkillGain(char, store, name, rank - found.rank, at)
 		end
+		if maxRank > (tonumber(found.maxRank) or 0) then
+			NoteCapChange(found, found.maxRank, maxRank, at)
+		end
 		if found.rank ~= rank or found.maxRank ~= maxRank then
 			found.rank = rank
 			found.maxRank = maxRank
@@ -580,6 +616,7 @@ local function RecordSkillReading(char, name, rank, maxRank, evidence, observed)
 			firstAt = at, lastSeenAt = at, lastRankAt = at, updatedAt = at,
 			observed = "live", evidence = evidence or "trade_skill_window",
 		}
+		NoteCapChange(found, 0, maxRank, at)
 		store.skills[#store.skills + 1] = found
 	end
 	if not store.learned[name] then
@@ -790,6 +827,14 @@ local function SnapshotProfessions(char, observed)
 				if (tonumber(old.maxRank) or 0) > skill.maxRank then
 					skill.maxRank = old.maxRank
 				end
+			end
+			if old then
+				skill.capHistory = old.capHistory
+				if (tonumber(skill.maxRank) or 0) > (tonumber(old.maxRank) or 0) then
+					NoteCapChange(skill, old.maxRank, skill.maxRank, at)
+				end
+			else
+				NoteCapChange(skill, 0, skill.maxRank, at)
 			end
 			if observed ~= "login" and old and type(old.rank) == "number" and skill.rank > old.rank then
 				NoteSkillGain(char, store, skill.name, skill.rank - old.rank, at)

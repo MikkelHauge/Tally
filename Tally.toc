@@ -2,7 +2,7 @@
 ## Title: Tally
 ## Notes: Character statistics: playtime, gold, combat, loot and exploration - recorded quietly in the background and shown in a clean dashboard.
 ## Author: Mikkel
-## Version: 20261105.3
+## Version: 20261105.4
 ## SavedVariables: TallyDB
 ## IconTexture: Interface\Icons\INV_Misc_Book_09
 

@@ -683,6 +683,72 @@ local function SkillLevelRows(char, names, order)
 		maxRanks[name] = maxRank
 		rankAtLevel[name] = rank
 	end
+	-- The cap in effect at each level. A record written before cap changes
+	-- were kept only has the current maxRank, so the rank path is used: the
+	-- level where the rank reaches a tier's ceiling is the level the next
+	-- ceiling became possible. A recorded cap history, when present, wins.
+	local endRanks, capAtLevel = {}, {}
+	local walkRanks = {}
+	for index = 1, #names do
+		local name = names[index]
+		walkRanks[name] = currentRanks[name]
+		endRanks[name] = {}
+		capAtLevel[name] = {}
+	end
+	for level = lastLevel, firstLevel, -1 do
+		local gains = type(byLevel[level]) == "table" and byLevel[level] or {}
+		for index = 1, #names do
+			local name = names[index]
+			local after = tonumber(walkRanks[name]) or 0
+			endRanks[name][level] = after
+			walkRanks[name] = math.max(0, after - (tonumber(gains[name]) or 0))
+		end
+	end
+	local rankTiers = ns.ProfessionRanks or RANK_FALLBACK
+	for index = 1, #names do
+		local name = names[index]
+		local currentMax = maxRanks[name] or 0
+		local caps = {}
+		for tierIndex = 1, #rankTiers do
+			local cap = tonumber(rankTiers[tierIndex].to) or 0
+			if cap > 0 and cap <= currentMax then
+				caps[#caps + 1] = cap
+			end
+		end
+		if #caps == 0 and currentMax > 0 then
+			caps[1] = currentMax
+		end
+		local history = skillByName[name] and skillByName[name].capHistory
+		local capIndex = 1
+		local inferred = caps[1] or currentMax
+		for level = firstLevel, lastLevel do
+			while capIndex < #caps and (endRanks[name][level] or 0) >= inferred
+				and currentMax > inferred do
+				capIndex = capIndex + 1
+				inferred = caps[capIndex]
+			end
+			local cap = inferred
+			if type(history) == "table" then
+				for historyIndex = 1, #history do
+					local entry = history[historyIndex]
+					if type(entry) == "table"
+						and (tonumber(entry.level) or 0) <= level
+						and (tonumber(entry.maxRank) or 0) > cap then
+						cap = tonumber(entry.maxRank)
+					end
+				end
+			end
+			-- The current level always shows the cap the client reports now,
+			-- even when the old records cannot say when it was raised.
+			if level == current and currentMax > cap then
+				cap = currentMax
+			end
+			if currentMax > 0 and cap > currentMax then
+				cap = currentMax
+			end
+			capAtLevel[name][level] = cap
+		end
+	end
 
 	local rows = {}
 	if #names == 1 then
@@ -706,7 +772,7 @@ local function SkillLevelRows(char, names, order)
 			local gain = tonumber(gains[name]) or 0
 			local after = tonumber(rankAtLevel[name]) or 0
 			local before = math.max(0, after - gain)
-			local maxRank = maxRanks[name] or 0
+			local maxRank = (capAtLevel[name] and capAtLevel[name][level]) or maxRanks[name] or 0
 			local capHit, milestone
 			if gain > 0 then
 				if maxRank > 0 and after >= maxRank and before < maxRank then
@@ -760,7 +826,7 @@ local function SkillLevelRows(char, names, order)
 		row.tip = {
 			kind = "note", title = "Level "..level,
 			lines = lines,
-			note = "Only skill-ups Tally saw happen are counted here. Green = more than 25 points below the next cap, amber = within 25, red = at the cap, gold = 300. The bracket is the rank at that level.",
+			note = "Only skill-ups Tally saw happen are counted here. Green = more than 25 points below the next cap, amber = within 25, red = at the cap, gold = 300. The bracket is the rank and the cap in effect at that level; where a cap change was not recorded, the level where the rank reached the old ceiling marks it.",
 			key = "skillLevel|"..level.."|"..table.concat(names, ","),
 		}
 		rows[#rows + 1] = row
