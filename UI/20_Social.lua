@@ -117,6 +117,38 @@ local function AddTotals(lines, char, social)
 	AddLine(lines, "Current guild", guild.name or "none")
 	AddLine(lines, "Time in guild", Duration(guild.seconds))
 	AddLine(lines, "Time without a guild", Duration(guild.guildless))
+	-- Guild chat and officer chat sent while in each guild. The lifetime
+	-- total is the same figure as "Guild" in the Chat section; the rows split
+	-- it by guild where the guild was known. Messages recorded before this
+	-- split existed stay in a final "Not split" row rather than being guessed
+	-- into a guild.
+	local byGuild = socialChat.byGuild or {}
+	local guildRows, guildTracked = {}, 0
+	for name, count in pairs(byGuild) do
+		count = tonumber(count) or 0
+		if count > 0 then
+			guildRows[#guildRows + 1] = { name = name, count = count }
+			guildTracked = guildTracked + count
+		end
+	end
+	local guildMessages = tonumber(socialChat.guild) or 0
+	if guildMessages > 0 then
+		table.sort(guildRows, function(a, b)
+			if a.count ~= b.count then
+				return a.count > b.count
+			end
+			return tostring(a.name) < tostring(b.name)
+		end)
+		AddLine(lines, "Guild messages sent", ns.FormatNumber(guildMessages))
+		for index = 1, #guildRows do
+			local row = guildRows[index]
+			AddLine(lines, "   "..row.name, ns.FormatNumber(row.count))
+		end
+		local split = math.max(0, guildMessages - guildTracked)
+		if split > 0 then
+			AddLine(lines, "   Not split by guild", ns.FormatNumber(split), { 0.62, 0.62, 0.62 })
+		end
+	end
 
 	AddHeader(lines, "Chat")
 	AddLine(lines, "Messages sent", ns.FormatNumber(socialChat.sent or 0))

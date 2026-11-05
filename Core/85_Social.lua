@@ -51,6 +51,12 @@ local function Ensure(char)
 		social.chat = { sent = 0, say = 0, yell = 0, party = 0, raid = 0,
 			guild = 0, whisper = 0, channels = 0, emote = 0, other = 0 }
 	end
+	if type(social.chat.byGuild) ~= "table" then
+		-- Guild and officer chat sent while in each guild, keyed by guild
+		-- name. The lifetime guild total stays in social.chat.guild; this is
+		-- the per-guild breakdown shown on the Social card.
+		social.chat.byGuild = {}
+	end
 	if type(social.whispers) ~= "table" then
 		social.whispers = { sent = 0, received = 0, sentCombos = {}, receivedCombos = {} }
 	end
@@ -526,6 +532,14 @@ local function CountSentChat(chatType, targetName)
 	end
 	local bucket = CHAT_BUCKET[chatType or "SAY"] or "other"
 	social.chat[bucket] = (social.chat[bucket] or 0) + 1
+	if bucket == "guild" then
+		-- Guild chat and officer chat both count for the guild the character
+		-- is in when the message is sent.
+		local guildName = GuildName("player")
+		if guildName then
+			social.chat.byGuild[guildName] = (tonumber(social.chat.byGuild[guildName]) or 0) + 1
+		end
+	end
 	if bucket == "whisper" then
 		-- Whispers have their own counters; counting them in the chat total
 		-- too would show the same message twice, once in Messages sent and
@@ -543,17 +557,16 @@ local function CountSentChat(chatType, targetName)
 end
 
 local lastSendAt = 0
-local lastEditSendAt = 0
 local hookedSend
 
 local function ChatNow()
 	return (GetTime and GetTime()) or 0
 end
 
--- The send hook can go quiet for two reasons: the client's chat frame took a
--- local reference to SendChatMessage before addons loaded, or something
--- replaced the global after us. Re-hooking compares the function object; the
--- edit-box wrapper below covers the local-reference case.
+-- The send hook can go quiet if the client's chat frame took a local
+-- reference to SendChatMessage before addons loaded, or something replaced
+-- the global after us. Re-hooking compares the function object; HookEditText
+-- below is the fallback for the local-reference case.
 local function HookSend()
 	if type(SendChatMessage) ~= "function" or SendChatMessage == hookedSend then
 		return
@@ -563,7 +576,7 @@ local function HookSend()
 	end
 	local ok = pcall(hooksecurefunc, "SendChatMessage", function(_, chatType, _, target)
 		local now = ChatNow()
-		if now - lastEditSendAt < 0.5 or now - lastSendAt < 0.5 then
+		if now - lastSendAt < 0.5 then
 			return
 		end
 		lastSendAt = now
@@ -661,56 +674,18 @@ local function ChatCommandTarget(text)
 	return nil
 end
 
--- The chat edit box's OnEnterPressed is a function Blizzard assigned before
--- addons loaded, so hooking the global ChatEdit_SendText does not reach it.
--- The script itself is wrapped instead: the text is read before the original
--- handler clears the box and sends it.
-local function WatchEditBox(box)
-	if not box or box.tallySocialWatched then
-		return
-	end
-	local original = box:GetScript("OnEnterPressed")
-	if type(original) ~= "function" then
-		return
-	end
-	box.tallySocialWatched = true
-	ns.socialEditHooked = true
-	box:SetScript("OnEnterPressed", function(self, ...)
-		local text = self:GetText()
-		if text and text ~= "" then
-			local chatType, target
-			if string.sub(text, 1, 1) == "/" then
-				chatType = ChatCommandType(text)
-				target = ChatCommandTarget(text)
-			else
-				chatType = EditBoxChatType(self)
-			end
-			if chatType then
-				if chatType == "WHISPER" then
-					target = WhisperTarget(self, target)
-				end
-				lastEditSendAt = ChatNow()
-				CountSentChat(chatType, target)
-			end
-		end
-		return original(self, ...)
-	end)
-end
-
-local function WatchEditBoxes()
-	for index = 1, (NUM_CHAT_WINDOWS or 10) do
-		WatchEditBox(_G["ChatFrame"..index.."EditBox"])
-	end
-end
-
--- Last resort for clients where the edit box script could not be wrapped.
+-- The chat edit box's OnEnterPressed script is deliberately left alone.
+-- Replacing it taints the edit box, and a tainted chat box blocks protected
+-- guild actions such as /invite. Hooking SendChatMessage and ChatEdit_SendText
+-- is secure and covers the send path without touching the frame.
+-- Last resort for clients where SendChatMessage itself is unreachable.
 local function HookEditText()
 	if type(ChatEdit_SendText) ~= "function" or type(hooksecurefunc) ~= "function" then
 		return
 	end
-	pcall(hooksecurefunc, "ChatEdit_SendText", function(editBox)
+	local ok = pcall(hooksecurefunc, "ChatEdit_SendText", function(editBox)
 		local now = ChatNow()
-		if now - lastEditSendAt < 0.5 or now - lastSendAt < 0.5 then
+		if now - lastSendAt < 0.5 then
 			return
 		end
 		local text = editBox and editBox:GetText() or ""
@@ -730,10 +705,12 @@ local function HookEditText()
 		local chatType = EditBoxChatType(editBox)
 		CountSentChat(chatType, chatType == "WHISPER" and WhisperTarget(editBox) or nil)
 	end)
+	if ok then
+		ns.socialEditHooked = true
+	end
 end
 
 HookSend()
-WatchEditBoxes()
 HookEditText()
 -- Emotes typed with a slash go through DoEmote, not SendChatMessage.
 if type(DoEmote) == "function" and type(hooksecurefunc) == "function" then
@@ -1427,7 +1404,6 @@ ns.On("DUEL_FINISHED", OnDuelFinished, "Social")
 ns.On("CHAT_MSG_SYSTEM", OnDuelMessage, "Social")
 ns.On("PLAYER_LOGIN", function()
 	HookSend()
-	WatchEditBoxes()
 	HookEditText()
 end, "Social")
 ns.On("PLAYER_TARGET_CHANGED", function()

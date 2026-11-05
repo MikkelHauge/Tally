@@ -7,8 +7,8 @@ It records a LOT of things (a few things are not tested, and a lot of  things ar
 What is tracked:
 
 - **Character** - overview, professions by level, milestones, timeline, and a
-  Social view (group time, guild history, chat by channel, whispers, trades,
-  mail, duels, and the races/classes met).
+  Social view (group time, guild history, guild chat messages per guild, chat
+  by channel, whispers, trades, mail, duels, and the races/classes met).
 - **Playtime** - sessions, level-ups, `/played` sync, alive/afk time.
 - **Economy** - balance history, income/expense ledger, trades, auction
   activity, professions, and Merchant's Favor on Forever.

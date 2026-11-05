@@ -23,7 +23,7 @@ local addonName, ns = ...
 
 -- Build string reported by "/tally debug" and the trace block. Set by the
 -- maintainer; no logic reads it.
-ns.BUILD = "20261103 (Version follows the release date; Forever only.)"
+ns.BUILD = "20261105 (Version follows the release date; Forever only.)"
 
 -- In-memory only: key of the character the window and the printed reports
 -- describe when it differs from the character being played; nil when none.
@@ -62,8 +62,7 @@ local TUNING = {
 	questXpWindow = 5,         -- experience after a turn-in is that quest's
 	questGoldWindow = 8,       -- and so is reward money arriving within this
 	levelSplitSlack = 2,       -- seconds a count may differ from a /played stretch
-	levelRetryFor = 20,        -- seconds a level-up's /played reply is awaited
-	levelRetryEvery = 2,       -- and how often it is asked for again
+	levelReplyFor = 20,        -- seconds a level-up's /played timing is awaited
 	repairGrace = 30,          -- seconds a repair quote outlives its vendor window
 	repairButton = 8,          -- seconds the repair button's own evidence lives
 	windowGrace = 5,           -- seconds a closed window still names its money
@@ -1103,7 +1102,6 @@ local sessionResumed = false     -- session boundary, set at world entry
 local worldEntered = false       -- a world entry has happened this load
 local playerGUID
 local lastPlayedSync = 0
-local playedRetryAt = 0           -- next repeat of an unanswered level-up request
 local pendingLevelSnapshot
 
 -- Forward declarations. ResetCharStats (below) calls into session and
@@ -1488,6 +1486,9 @@ function RequestPlayedSync()
 		-- screen for a few seconds: the numbers are read either way, so the
 		-- request costs the player nothing but chat noise otherwise.
 		playedRequestAt = Now()
+		-- The periodic sync and a level-up must not both ask in the same
+		-- moment; this is the single place that marks a request as sent.
+		lastPlayedSync = playedRequestAt
 		pcall(RequestTimePlayed)
 	end
 end
@@ -1691,18 +1692,26 @@ local function OnLevelUp(newLevel)
 	if not char then
 		return
 	end
-	char.level = newLevel or UnitLevel("player") or char.level
-	if (char.highLevel or 0) < (char.level or 0) then
-		char.highLevel = char.level
+	newLevel = tonumber(newLevel)
+	if not newLevel and type(UnitLevel) == "function" then
+		newLevel = tonumber(UnitLevel("player"))
+	end
+	if not newLevel or newLevel <= 0 then
+		return
+	end
+	-- The one-second tick and PLAYER_LEVEL_UP can both see the same level.
+	-- Only the first may count it or ask for /played again.
+	if char.level and newLevel <= char.level then
+		return
+	end
+	char.level = newLevel
+	if (char.highLevel or 0) < newLevel then
+		char.highLevel = newLevel
 	end
 	-- The level itself is identity and always moves; the session count and
 	-- the /played request belong to playtime, so they wait for it.
 	if not ns.Tracks("playtime") then
 		return
-	end
-	local session = char.sessions.current
-	if session then
-		session.levelCount = (session.levelCount or 0) + 1
 	end
 	local zone, zoneKind
 	if ns.MilestoneContext then
@@ -1716,34 +1725,45 @@ local function OnLevelUp(newLevel)
 		char.levels.history = {}
 	end
 	local last = char.levels.history[#char.levels.history]
-	if last and last.level == char.level then
-		pendingLevelSnapshot = {
-			level = char.level, at = at,
-			zone = zone, zoneKind = zoneKind,
-			entry = last.pending and last or nil,
-		}
-	else
-		local entry = {
-			level = char.level, at = at, zone = zone, zoneKind = zoneKind,
-			observed = "live", partial = true, pending = true,
-		}
-		char.levels.history[#char.levels.history + 1] = entry
-		if ns.NoteEvent then
-			local event = ns.NoteEvent("level_up", {
-				at = at, zone = zone, zoneKind = zoneKind,
-				how = "level_up", evidence = "level_event", observed = "live",
-				data = { level = char.level, partial = true },
-			})
-			if event then
-				entry.event = event.id
-			end
-		end
-		pendingLevelSnapshot = {
-			level = char.level, at = at,
-			zone = zone, zoneKind = zoneKind,
-			entry = entry,
-		}
+	if last and last.level == newLevel then
+		-- A /played reply or an earlier call already recorded this level.
+		return
 	end
+	local session = char.sessions.current
+	if session then
+		session.levelCount = (session.levelCount or 0) + 1
+	end
+	-- An earlier level-up whose reply has not arrived must not be announced
+	-- later as this level. Its timing is simply marked missing.
+	if pendingLevelSnapshot then
+		if pendingLevelSnapshot.entry then
+			pendingLevelSnapshot.entry.pending = nil
+			pendingLevelSnapshot.entry.timingMissing = true
+		end
+		pendingLevelSnapshot = nil
+	end
+	local entry = {
+		level = newLevel, at = at, zone = zone, zoneKind = zoneKind,
+		observed = "live", partial = true, pending = true,
+	}
+	char.levels.history[#char.levels.history + 1] = entry
+	if ns.NoteEvent then
+		local event = ns.NoteEvent("level_up", {
+			at = at, zone = zone, zoneKind = zoneKind,
+			how = "level_up", evidence = "level_event", observed = "live",
+			data = { level = newLevel, partial = true },
+		})
+		if event then
+			entry.event = event.id
+		end
+	end
+	pendingLevelSnapshot = {
+		level = newLevel, at = at,
+		zone = zone, zoneKind = zoneKind,
+		entry = entry,
+	}
+	-- One request per level-up. The timeout in the ticker marks the timing
+	-- unknown if the client does not answer; it does not ask again.
 	RequestPlayedSync()
 	if ns.OnDataTick then
 		ns.OnDataTick()
@@ -2541,27 +2561,16 @@ local function OnTickStep()
 		lastPlayedSync = now
 		RequestPlayedSync()
 	end
-	-- The client does not answer every /played request. A level-up whose
-	-- reading has not arrived is asked for again for a short while, so the
-	-- level keeps its own reading instead of being folded into the next one.
-	if playtime and pendingLevelSnapshot and now >= playedRetryAt then
-		if char.played.at and char.played.at >= pendingLevelSnapshot.at then
-			if pendingLevelSnapshot.entry then
-				pendingLevelSnapshot.entry.pending = nil
-				pendingLevelSnapshot.entry.timingMissing = true
-			end
-			pendingLevelSnapshot = nil
-		elseif now - pendingLevelSnapshot.at < TUNING.levelRetryFor then
-			playedRetryAt = now + TUNING.levelRetryEvery
-			RequestPlayedSync()
-		else
-			ns.Trace("no /played reply after level "..tostring(pendingLevelSnapshot.level).."; giving up")
-			if pendingLevelSnapshot.entry then
-				pendingLevelSnapshot.entry.pending = nil
-				pendingLevelSnapshot.entry.timingMissing = true
-			end
-			pendingLevelSnapshot = nil
+	-- A level-up whose /played reply never arrives is marked as lacking timing
+	-- rather than asked for again. Repeated requests only fill the chat with
+	-- /played replies, and the next periodic sync still brings the total.
+	if playtime and pendingLevelSnapshot and now - pendingLevelSnapshot.at >= TUNING.levelReplyFor then
+		ns.Trace("no /played reply after level "..tostring(pendingLevelSnapshot.level).."; timing left unknown")
+		if pendingLevelSnapshot.entry then
+			pendingLevelSnapshot.entry.pending = nil
+			pendingLevelSnapshot.entry.timingMissing = true
 		end
+		pendingLevelSnapshot = nil
 	end
 	if questPending and (now - questAt) > TUNING.questWindow * 3 then
 		questPending = false
@@ -4422,7 +4431,6 @@ HandleTallyEvent = function(event, ...)
 		sessionResumed = false
 		worldEntered = false
 		lastPlayedSync = 0
-		playedRetryAt = 0
 		pendingLevelSnapshot = nil
 		questPending = false
 		recentXpGains = {}
