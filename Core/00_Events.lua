@@ -142,6 +142,7 @@ function ns.Dispatch(key, event, ...)
 			local ok, err = pcall(entry.handler, event, ...)
 			if not ok then
 				entry.disabled = true
+				ns.lastEventError = tostring(event).." ("..tostring(entry.owner).."): "..tostring(err)
 				Trace("event "..tostring(event).." ("..tostring(entry.owner)..") failed: "..tostring(err))
 			end
 		end

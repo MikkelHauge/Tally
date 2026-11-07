@@ -4,3 +4,4 @@ package-as: Tally
 ignore:
   - README.md
   - LICENSE
+  - CHANGELOG.md

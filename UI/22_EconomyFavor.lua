@@ -14,6 +14,16 @@ local ACCENT, GREEN, RED, VALUE_COLOR, ROW_DETAIL_DIM,
 	ns.AddCardScrollbar, ns.MakeCardScrollable, ns.FillScrollingLines, ns.ShowCardText,
 	ns.RowHoverTick, ns.CreateCornerButton, ns.SetCornerLabel, ns.CutRowText
 
+-- No "os" table on this client; date() is the game's own function.
+local Date
+if type(date) == "function" then
+	Date = date
+elseif type(os) == "table" and type(os.date) == "function" then
+	Date = os.date
+else
+	Date = function() return "unknown" end
+end
+
 local FAVOR_ID = 3402
 local favorWidgets = {
 	tiles = {},
@@ -193,7 +203,7 @@ local function RefreshTiles(entry)
 	local starting = Number(entry.starting)
 	local earned = Number(entry.earned)
 	local spent = Number(entry.spent)
-	local day = os.date("%Y-%m-%d")
+	local day = Date("%Y-%m-%d")
 	local daily = type(entry.daily) == "table" and entry.daily or {}
 	local today = type(daily[day]) == "table" and daily[day] or { earned = 0, spent = 0 }
 	local todayEarned = Number(today.earned)
@@ -244,7 +254,7 @@ local function UpdateButtons()
 	end
 end
 
-local function RefreshEconomyFavor()
+local function RefreshEconomyFavorInner()
 	local card = favorWidgets.card
 	if not card then
 		return
@@ -255,19 +265,37 @@ local function RefreshEconomyFavor()
 		-- back to the character being played rather than claiming none exists.
 		char = ns.GetChar()
 	end
+	-- The currency can be read whether or not a character record is loaded,
+	-- so the tab never has to be blank: the balance shown below is the live
+	-- figure the client answers.
+	local amount = ns.MerchantsFavor and ns.MerchantsFavor.Read and select(1, ns.MerchantsFavor.Read()) or nil
 	local entry = EntryFor(char)
-	RefreshTiles(entry)
+	if not entry and char and char == ns.GetChar() and ns.MerchantsFavor and type(ns.MerchantsFavor.Poll) == "function" then
+		-- Opening the tab is a good moment for a read: if the record was never
+		-- created (the login poll ran before the currency was readable), this
+		-- creates it without waiting for the 10-second tick.
+		pcall(ns.MerchantsFavor.Poll)
+		entry = EntryFor(char)
+	end
 
-	if not char then
-		ns.Trace("favor: no character record for the card (charKey="..tostring(ns.charKey)
-			..", viewKey="..tostring(ns.viewKey)..")")
-		ShowCardText(card, "No Merchant's Favor collected yet. Turn in a Waylaid Crate with Tally running.")
-		return
-	end
 	if not entry then
-		ShowCardText(card, "No Merchant's Favor collected for this character yet. Turn in a Waylaid Crate with Tally running.")
+		-- No record yet: show what the client actually reports and say that
+		-- the history begins with the first change Tally sees. An empty tab
+		-- next to a readable balance would just look broken.
+		local name = char and ns.DisplayName and ns.DisplayName(char) or "this character"
+		if amount ~= nil then
+			RefreshTiles({ balance = amount, starting = 0, earned = 0, spent = 0 })
+			ShowCardText(card, "Balance: "..ns.FormatNumber(amount).." Favor. Tally has not started the history for "
+				..name.." yet, so the first change it sees will open the record.")
+		else
+			RefreshTiles(nil)
+			ShowCardText(card, "No Merchant's Favor collected for "..name.." yet. The client returned no Favor value.")
+		end
+		ns.Trace("favor: no record yet (key="..tostring(ns.charKey)..", retry="..tostring(ns.retryLoginAttempt)
+			..", client read="..tostring(amount)..")")
 		return
 	end
+	RefreshTiles(entry)
 	if favorWidgets.view == "recent" then
 		local rows = RecentRows(entry)
 		if FillScrollingLines(card, rows or {}, favorWidgets, "offset", "Recent changes", 42) == 0 then
@@ -277,6 +305,20 @@ local function RefreshEconomyFavor()
 		local rows = LevelRows(entry)
 		if FillScrollingLines(card, rows or {}, favorWidgets, "offset", "By level", 44) == 0 then
 			ShowCardText(card, "No Merchant's Favor earned or spent per level yet.")
+		end
+	end
+end
+
+-- The page is drawn from a read of the client's currency, so a failure in one
+-- draw must not take the rest of the Economy page with it: the error is kept
+-- on the card instead of throwing.
+local function RefreshEconomyFavor()
+	local ok, err = pcall(RefreshEconomyFavorInner)
+	if not ok then
+		ns.lastFavorUiError = tostring(err)
+		ns.Trace("favor: UI refresh failed: "..tostring(err))
+		if favorWidgets.card then
+			ShowCardText(favorWidgets.card, "Merchant's Favor could not be drawn: "..tostring(err))
 		end
 	end
 end

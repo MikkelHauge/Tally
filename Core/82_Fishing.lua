@@ -41,6 +41,11 @@ local catchUntil = 0
 local unknownCastLogged = false
 local lootRecorded = {}
 local lastLootRecordAt = 0
+-- A vendor is open. Buying something pushes the item into the bags with the
+-- same chat wording a loot line can use ("You receive item"), so loot chat is
+-- ignored while a merchant window is up. A bobber's loot cannot arrive then:
+-- the two windows never share the screen.
+local merchantOpen = false
 
 local function Clear()
 	casting = false
@@ -408,6 +413,15 @@ local function OnLoot(event, text, looter)
 	if not ns.Tracks("loot") then
 		return
 	end
+	if merchantOpen then
+		-- A purchase, not a catch (see merchantOpen). The trace only fires
+		-- when a cast window was open, which is exactly the case that used to
+		-- put bought items on the fishing page.
+		if now <= catchUntil then
+			ns.Trace("fishing: ignored loot chat while a vendor was open")
+		end
+		return
+	end
 	if now > catchUntil then
 		-- A cast event may be missed (or a client may not send one). If the
 		-- player is channeling Fishing right now, this loot is still a catch:
@@ -434,7 +448,18 @@ local function OnLoot(event, text, looter)
 	if type(issecretvalue) == "function" and issecretvalue(text) then
 		return
 	end
-	local own = string.find(text, "^You receive loot") or string.find(text, "^You receive item")
+	-- "You receive item" is the client's wording for something pushed into
+	-- the bags - a vendor purchase, mail, the auction house - and "You
+	-- create" is a craft. Neither is ever a bobber, and counting them was how
+	-- bought items ended up on the fishing page whenever a cast window
+	-- happened to be open.
+	if string.find(text, "^You receive item") or string.find(text, "^You create") then
+		if now <= catchUntil then
+			ns.Trace("fishing: ignored a pushed item (vendor, mail or craft), not a catch")
+		end
+		return
+	end
+	local own = string.find(text, "^You receive loot")
 	if not own and looter then
 		local player = UnitName("player")
 		local secret = type(issecretvalue) == "function" and issecretvalue(looter)
@@ -543,6 +568,12 @@ ns.On("UNIT_SPELLCAST_STOP", OnCastStop, "Fishing")
 ns.On("CHAT_MSG_LOOT", OnLoot, "Fishing")
 ns.On("LOOT_READY", OnLootWindow, "Fishing")
 ns.On("LOOT_OPENED", OnLootWindow, "Fishing")
+ns.On("MERCHANT_SHOW", function()
+	merchantOpen = true
+end, "Fishing")
+ns.On("MERCHANT_CLOSED", function()
+	merchantOpen = false
+end, "Fishing")
 ns.On("PLAYER_LOGIN", function()
 	casting = false
 	channelSeen = false
@@ -552,5 +583,6 @@ ns.On("PLAYER_LOGIN", function()
 	lootRecorded = {}
 	lastLootRecordAt = 0
 	unknownCastLogged = false
+	merchantOpen = false
 	RefreshFishingName()
 end, "Fishing")

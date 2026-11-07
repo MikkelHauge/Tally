@@ -2238,6 +2238,14 @@ local function OnBlockedAction(eventName, which, blockedFunction)
 			ns.db.settings.copyDirect = false
 			ns.Print("The game blocked Tally from the system clipboard - Copy opens a selectable text window instead.")
 		end
+	elseif string.find(blockedFunction, "SetRaidTarget", 1, true) then
+		-- A macro's /run is insecure Lua; the client refuses protected calls
+		-- from it and names an addon as the taint source. Tally has no call
+		-- to this one, so saying it was blocked "from using" it is wrong.
+		if not forbiddenSeen[blockedFunction] then
+			forbiddenSeen[blockedFunction] = true
+			ns.Print("The game refused SetRaidTarget and named Tally. Tally never calls it: a macro using /run runs insecure Lua, and protected calls such as raid markers are refused there. Use /tm 1-8 instead.")
+		end
 	elseif not forbiddenSeen[blockedFunction] then
 		forbiddenSeen[blockedFunction] = true
 		ns.Print("The game blocked Tally from using "..blockedFunction.." ("..tostring(which or "?").."). Please pass this line on.")
@@ -4158,8 +4166,29 @@ local function HandleSlash(message)
 				end
 			end
 		end
+	elseif command == "favor" then
+		-- "/tally favor sync" runs the same read the timer runs, which is
+		-- also where a record that does not add up is repaired.
+		if argument and string.lower(argument) == "sync" then
+			if ns.MerchantsFavor and type(ns.MerchantsFavor.Poll) == "function" then
+				pcall(ns.MerchantsFavor.Poll)
+			end
+			-- Repaint the card as well, so a poll that only ran because of
+			-- this command cannot leave stale tiles behind.
+			if ns.RefreshEconomyFavor then
+				pcall(ns.RefreshEconomyFavor)
+			end
+		end
+		local lines = ns.MerchantsFavorDiagnostics and ns.MerchantsFavorDiagnostics() or nil
+		if not lines or #lines == 0 then
+			ns.Print("Merchant's Favor is not on this client.")
+		else
+			for index = 1, #lines do
+				ns.Print(lines[index])
+			end
+		end
 	elseif command == "help" then
-		ns.Print("Commands: /tally, /tally print [report], /tally copy [report], /tally audit, /tally export, /tally surname <name>, /tally names, /tally auras [reset], /tally auctions [repair], /tally debug, /tally trace, /tally combatlog")
+		ns.Print("Commands: /tally, /tally print [report], /tally copy [report], /tally audit, /tally export, /tally surname <name>, /tally names, /tally auras [reset], /tally auctions [repair], /tally favor, /tally debug, /tally trace, /tally combatlog")
 		ns.Print("Reports: "..table.concat(ns.REPORT_ORDER, ", "))
 	else
 		ns.Print("Unknown command - type /tally help.")
@@ -4217,6 +4246,42 @@ local function OnAddonLoad()
 			ns.Print("Tally could not build its window: "..tostring(buildError))
 		end
 		ns.Trace("UI built")
+	end
+	-- Some clients never raise PLAYER_LOGIN or PLAYER_ENTERING_WORLD after a
+	-- /reload; only ADDON_LOADED arrives. Waiting for an event that never
+	-- comes left the addon with no character at all, so the selection is
+	-- retried on a short timer until the client can name the player. On a
+	-- client where the events do fire this finds a key already set and does
+	-- nothing; it deliberately does not start a session or begin play, so the
+	-- normal event path stays the only one that does.
+	if not ns.charKey then
+		local attempt = 0
+		local function RetryLogin()
+			if ns.charKey then
+				return
+			end
+			attempt = attempt + 1
+			local name = UnitName and UnitName("player") or nil
+			local level = tonumber(UnitLevel and UnitLevel("player")) or 0
+			if name and name ~= "" and level > 0 then
+				local okInit, initError = pcall(InitializeCharacter)
+				if okInit then
+					ns.initError = nil
+					ns.retryLoginAttempt = attempt
+					ns.Trace("character selected by the login retry (attempt "..attempt..")")
+					if ns.OnDataTick then
+						pcall(ns.OnDataTick)
+					end
+					return
+				end
+				ns.initError = tostring(initError)
+				ns.Trace("ERROR in InitializeCharacter (retry): "..tostring(initError))
+			end
+			if attempt < 60 then
+				ns.After(1, RetryLogin)
+			end
+		end
+		ns.After(1, RetryLogin)
 	end
 end
 
@@ -4516,7 +4581,10 @@ HandleTallyEvent = function(event, ...)
 		end
 		local okInit, initError = pcall(InitializeCharacter)
 		if not okInit then
+			ns.initError = tostring(initError)
 			ns.Trace("ERROR in InitializeCharacter: "..tostring(initError))
+		else
+			ns.initError = nil
 		end
 		local char = ns.GetChar()
 		if char then
@@ -4566,6 +4634,25 @@ HandleTallyEvent = function(event, ...)
 		local isInitialLogin, isReloadingUi = ...
 		worldEntered = true
 		ns.Trace("entering world (initial login="..tostring(isInitialLogin)..", ui reload="..tostring(isReloadingUi)..")")
+		if not ns.charKey then
+			-- PLAYER_LOGIN is the normal place the character is selected. A
+			-- client that does not raise it on a /reload leaves the addon with
+			-- no character at all, and this is the first moment that can be
+			-- corrected. With a key already set, none of this runs.
+			ns.worldLogin = true
+			local okInit, initError = pcall(InitializeCharacter)
+			if okInit then
+				ns.initError = nil
+				local char = ns.GetChar()
+				if char then
+					RestorePresence(char)
+				end
+				ns.Trace("character selected at world entry (PLAYER_LOGIN did not arrive)")
+			else
+				ns.initError = tostring(initError)
+				ns.Trace("ERROR in InitializeCharacter (world entry): "..tostring(initError))
+			end
+		end
 		BeginPlay()
 		BeginSession(isInitialLogin, isReloadingUi)
 		ns.explore.UpdateArea()

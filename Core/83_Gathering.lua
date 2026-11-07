@@ -34,6 +34,11 @@ local activeAt = 0
 local activeGUID
 local lootRecorded = {}
 local windowMatched = false
+-- A vendor is open. Buying something pushes the item into the bags with the
+-- same chat wording a loot line can use, so loot chat is ignored while a
+-- merchant window is up. A node or corpse cannot be looted then, and the
+-- loot-window path below is untouched if it ever could.
+local merchantOpen = false
 
 local function SafeString(value)
 	if type(value) ~= "string" then
@@ -460,6 +465,12 @@ local function OnLoot(event, text, looter)
 		activeProfession = nil
 		return
 	end
+	if merchantOpen then
+		-- A purchase, not the gather this window was opened for. The trace
+		-- names the case that would otherwise have been credited.
+		ns.Trace("gathering: ignored loot chat while a vendor was open")
+		return
+	end
 	if type(text) ~= "string" then
 		return
 	end
@@ -590,6 +601,18 @@ ns.On("LOOT_READY", OnLootWindow, "Gathering")
 ns.On("LOOT_OPENED", OnLootWindow, "Gathering")
 ns.On("LOOT_CLOSED", OnLootClosed, "Gathering")
 ns.On("CHAT_MSG_LOOT", OnLoot, "Gathering")
+ns.On("MERCHANT_SHOW", function()
+	merchantOpen = true
+end, "Gathering")
+ns.On("MERCHANT_CLOSED", function()
+	merchantOpen = false
+end, "Gathering")
+ns.On("PLAYER_ENTERING_WORLD", function()
+	-- A close event can be missed (a reload with the vendor up, a client
+	-- quirk); every zone change clears the flag as well, so a stuck value
+	-- cannot silence loot chat for the rest of the session.
+	merchantOpen = false
+end, "Gathering")
 ns.On("PLAYER_LOGIN", function()
 	activeProfession = nil
 	activeAt = 0
@@ -597,4 +620,5 @@ ns.On("PLAYER_LOGIN", function()
 	activeGUID = nil
 	lootRecorded = {}
 	windowMatched = false
+	merchantOpen = false
 end, "Gathering")
