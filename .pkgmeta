@@ -5,3 +5,5 @@ ignore:
   - README.md
   - LICENSE
   - CHANGELOG.md
+  - RELEASE.md
+  - AGENTS.md
