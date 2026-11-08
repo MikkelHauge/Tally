@@ -89,11 +89,25 @@ automatic from the tag push.
    Without `package-as`, CurseForge names the folder after the project's URL
    slug.
 
-7. **Make the first release** by bumping the version, committing and pushing a
-   tag - the release steps below. A brand-new project cannot be approved until
-   it has a file, so the first tag is what gives it one.
+7. **Make the first release with a tag.** Bump `## Version: YYYYMMDD.N` in the
+   TOC, commit, push `main`, then create and push the tag:
+
+   ```powershell
+   git tag vYYYYMMDD.N
+   git push origin vYYYYMMDD.N
+   ```
+
+   - The **pushed tag** is what makes CurseForge package a release file; a
+     `main` push on its own creates no release file.
+   - Use a lightweight tag (no `-a`), and never reuse a version or move an
+     existing tag.
+   - A tag containing `alpha` or `beta` makes an Alpha/Beta file; every other
+     tag makes a Release file.
+   - A brand-new project cannot be approved until it has a file, so the first
+     tag is what gives it one.
 
 After that, every release is just: bump, commit, push `main`, tag, push tag.
+Section 4.4 has the full tagging steps and the checks that go with them.
 
 ---
 
