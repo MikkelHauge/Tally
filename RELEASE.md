@@ -67,7 +67,15 @@ automatic from the tag push.
    GitHub sends a `ping` immediately; a `200` in **Recent Deliveries** means
    the URL and token are accepted.
 
-5. **Add `.pkgmeta`** at the repository root, next to the TOC:
+5. **Use the MIT license on both sides.**
+
+   - **GitHub:** keep an MIT `LICENSE` file at the repository root. Choose
+     "MIT License" when creating a repository, or add the file afterwards;
+     GitHub detects it and shows "MIT license" on the repository page.
+   - **CurseForge:** set the project license to **MIT** in the project
+     settings (Edit Project -> License).
+
+6. **Add `.pkgmeta`** at the repository root, next to the TOC:
 
    ```yaml
    package-as: <AddonFolderName>
@@ -81,7 +89,7 @@ automatic from the tag push.
    Without `package-as`, CurseForge names the folder after the project's URL
    slug.
 
-6. **Make the first release** by bumping the version, committing and pushing a
+7. **Make the first release** by bumping the version, committing and pushing a
    tag - the release steps below. A brand-new project cannot be approved until
    it has a file, so the first tag is what gives it one.
 
