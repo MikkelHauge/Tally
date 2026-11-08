@@ -6,12 +6,13 @@
 -- one.
 local addonName, ns = ...
 
-local ACCENT, economyWidgets, BuildEconomyLedger, RefreshEconomyLedger, BuildEconomyProfessions, RefreshEconomyProfessions, BuildEconomySecondary, RefreshEconomySecondary, BuildEconomyFavor, RefreshEconomyFavor, pageRefresh =
-	ns.ACCENT, ns.economyWidgets, ns.BuildEconomyLedger, ns.RefreshEconomyLedger, ns.BuildEconomyProfessions, ns.RefreshEconomyProfessions, ns.BuildEconomySecondary, ns.RefreshEconomySecondary, ns.BuildEconomyFavor, ns.RefreshEconomyFavor, ns.pageRefresh
+local ACCENT, economyWidgets, BuildEconomyLedger, RefreshEconomyLedger, BuildEconomyProfessions, RefreshEconomyProfessions, BuildEconomySecondary, RefreshEconomySecondary, BuildEconomyFavor, RefreshEconomyFavor, BuildEconomyUndermine, RefreshEconomyUndermine, pageRefresh =
+	ns.ACCENT, ns.economyWidgets, ns.BuildEconomyLedger, ns.RefreshEconomyLedger, ns.BuildEconomyProfessions, ns.RefreshEconomyProfessions, ns.BuildEconomySecondary, ns.RefreshEconomySecondary, ns.BuildEconomyFavor, ns.RefreshEconomyFavor, ns.BuildEconomyUndermine, ns.RefreshEconomyUndermine, ns.pageRefresh
 
--- The economy page's sub-views: "ledger", "professions", "secondary" and
--- "auction" (economyWidgets.subview). SelectEconomySubview sets which is
--- shown. The daily balance graph now lives on the Total tab.
+-- The economy page's sub-views: "ledger", "professions", "secondary",
+-- "favor", "undermine" and "auction" (economyWidgets.subview).
+-- SelectEconomySubview sets which is shown. The daily balance graph now lives
+-- on the Total tab.
 local function RefreshEconomy()
 	if not economyWidgets.ledgerFrame then
 		return
@@ -22,6 +23,8 @@ local function RefreshEconomy()
 		RefreshEconomySecondary()
 	elseif economyWidgets.subview == "favor" then
 		RefreshEconomyFavor()
+	elseif economyWidgets.subview == "undermine" then
+		RefreshEconomyUndermine()
 	elseif economyWidgets.subview == "auction" then
 		ns.RefreshAuctionView(economyWidgets.auctionStore)
 	else
@@ -55,6 +58,9 @@ local function SelectEconomySubview(name)
 	if economyWidgets.favorFrame then
 		economyWidgets.favorFrame:SetShown(name == "favor")
 	end
+	if economyWidgets.undermineFrame then
+		economyWidgets.undermineFrame:SetShown(name == "undermine")
+	end
 	if economyWidgets.auctionFrame then
 		economyWidgets.auctionFrame:SetShown(name == "auction")
 	end
@@ -71,6 +77,9 @@ local function SelectEconomySubview(name)
 	end
 	if name ~= "favor" then
 		ClearCardHover(economyWidgets.favorCard)
+	end
+	if name ~= "undermine" then
+		ClearCardHover(economyWidgets.undermineCard)
 	end
 	local buttons = economyWidgets.subButtons or {}
 	for id, button in pairs(buttons) do
@@ -110,6 +119,10 @@ local function BuildEconomyPage(page)
 	if hasFavor then
 		AddSubButton("favor", "Merchant's Favor")
 	end
+	local hasUndermine = ns.UndermineRealAvailable and ns.UndermineRealAvailable()
+	if hasUndermine then
+		AddSubButton("undermine", "Undermine Real")
+	end
 	AddSubButton("professions", "Professions")
 	AddSubButton("secondary", "Secondary")
 	AddSubButton("auction", "Auctions")
@@ -127,6 +140,15 @@ local function BuildEconomyPage(page)
 		favor:Hide()
 		economyWidgets.favorFrame = favor
 		BuildEconomyFavor(favor)
+	end
+
+	if hasUndermine and BuildEconomyUndermine then
+		local undermine = CreateFrame("Frame", nil, page)
+		undermine:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -26)
+		undermine:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
+		undermine:Hide()
+		economyWidgets.undermineFrame = undermine
+		BuildEconomyUndermine(undermine)
 	end
 
 	-- The professions sub-view: four tiles above two primary cards. The

@@ -7,6 +7,13 @@ This file lists every tagged release and what changed. New releases go at the to
 
 ## 20261108 - 8 November 2026
 
+**Added**
+
+- Economy -> Undermine Real: a new sub-tab next to Merchant's Favor tracks
+  Tarnished Undermine Real (item 226404) per character, with balance, earned,
+  spent, today, by-level and recent changes. `/tally undermine` prints the live
+  read, the resolved currency and the stored record.
+
 **Fixed**
 
 - Combat -> Fights & deaths: the Time breakdown card now scrolls. Every death

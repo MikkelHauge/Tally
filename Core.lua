@@ -4187,8 +4187,27 @@ local function HandleSlash(message)
 				ns.Print(lines[index])
 			end
 		end
+	elseif command == "undermine" then
+		-- "/tally undermine sync" runs the same read the timer runs, which is
+		-- also where a record that does not add up is repaired.
+		if argument and string.lower(argument) == "sync" then
+			if ns.UndermineReal and type(ns.UndermineReal.Poll) == "function" then
+				pcall(ns.UndermineReal.Poll)
+			end
+			if ns.RefreshEconomyUndermine then
+				pcall(ns.RefreshEconomyUndermine)
+			end
+		end
+		local lines = ns.UndermineRealDiagnostics and ns.UndermineRealDiagnostics() or nil
+		if not lines or #lines == 0 then
+			ns.Print("Undermine Real is not on this client.")
+		else
+			for index = 1, #lines do
+				ns.Print(lines[index])
+			end
+		end
 	elseif command == "help" then
-		ns.Print("Commands: /tally, /tally print [report], /tally copy [report], /tally audit, /tally export, /tally surname <name>, /tally names, /tally auras [reset], /tally auctions [repair], /tally favor, /tally debug, /tally trace, /tally combatlog")
+		ns.Print("Commands: /tally, /tally print [report], /tally copy [report], /tally audit, /tally export, /tally surname <name>, /tally names, /tally auras [reset], /tally auctions [repair], /tally favor, /tally undermine, /tally debug, /tally trace, /tally combatlog")
 		ns.Print("Reports: "..table.concat(ns.REPORT_ORDER, ", "))
 	else
 		ns.Print("Unknown command - type /tally help.")

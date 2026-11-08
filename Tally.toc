@@ -19,6 +19,7 @@ Core/82_Fishing.lua
 Core/83_Gathering.lua
 Core/84_MerchantsFavor.lua
 Core/85_Social.lua
+Core/86_UndermineReal.lua
 Core/90_Professions.lua
 Core/92_ProfessionsCooldowns.lua
 Core/95_Milestones.lua
@@ -46,6 +47,7 @@ UI/22_ProfessionsNotify.lua
 UI/22_EconomyProfessions.lua
 UI/22_EconomySecondary.lua
 UI/22_EconomyFavor.lua
+UI/22_EconomyUndermine.lua
 UI/22_EconomyGraph.lua
 UI/22_Economy.lua
 UI/23_CombatState.lua
