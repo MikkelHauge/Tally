@@ -53,6 +53,32 @@ local function TipInfo(title, lines, note)
 	return { kind = "note", title = title, lines = lines, note = note }
 end
 
+-- The faction-specific vendor hint shown under the empty states. The faction
+-- comes from the character the page is showing, not necessarily the one
+-- logged in; the live player is only a fallback when that is the same char.
+local function VendorLine(char)
+	local faction = ns.CharFaction and ns.CharFaction(char) or nil
+	if not faction and char and ns.GetChar and char == ns.GetChar()
+		and type(UnitFactionGroup) == "function" then
+		local ok, group = pcall(UnitFactionGroup, "player")
+		faction = ok and group or nil
+	end
+	if faction == "Horde" then
+		return "Can be exchanged for profession recipes, mounts, pets and cosmetics at Durotar Supply and Logistics, just west of Crossroads in The Barrens."
+	elseif faction == "Alliance" then
+		return "Can be exchanged for profession recipes, mounts, pets and cosmetics at Azeroth Commerce Authority, at the Three Corners in Redridge Mountains."
+	end
+	return nil
+end
+
+local function EmptyText(main, char)
+	local line = VendorLine(char)
+	if line then
+		return main.."\n\n|cff999999"..line.."|r"
+	end
+	return main
+end
+
 local function AddTip(tile)
 	tile:EnableMouse(true)
 	tile:SetScript("OnEnter", function(self)
@@ -285,11 +311,11 @@ local function RefreshEconomyFavorInner()
 		local name = char and ns.DisplayName and ns.DisplayName(char) or "this character"
 		if amount ~= nil then
 			RefreshTiles({ balance = amount, starting = 0, earned = 0, spent = 0 })
-			ShowCardText(card, "Balance: "..ns.FormatNumber(amount).." Favor. Tally has not started the history for "
-				..name.." yet, so the first change it sees will open the record.")
+			ShowCardText(card, EmptyText("You have "..ns.FormatNumber(amount)
+				.." Merchant's Favor. Tally starts the history with your next change.", char))
 		else
 			RefreshTiles(nil)
-			ShowCardText(card, "No Merchant's Favor collected for "..name.." yet. The client returned no Favor value.")
+			ShowCardText(card, EmptyText("No Merchant's Favor recorded for "..name.." yet.", char))
 		end
 		ns.Trace("favor: no record yet (key="..tostring(ns.charKey)..", retry="..tostring(ns.retryLoginAttempt)
 			..", client read="..tostring(amount)..")")
@@ -299,12 +325,12 @@ local function RefreshEconomyFavorInner()
 	if favorWidgets.view == "recent" then
 		local rows = RecentRows(entry)
 		if FillScrollingLines(card, rows or {}, favorWidgets, "offset", "Recent changes", 42) == 0 then
-			ShowCardText(card, "No Merchant's Favor changes recorded yet.")
+			ShowCardText(card, EmptyText("No Merchant's Favor changes recorded yet.", char))
 		end
 	else
 		local rows = LevelRows(entry)
 		if FillScrollingLines(card, rows or {}, favorWidgets, "offset", "By level", 44) == 0 then
-			ShowCardText(card, "No Merchant's Favor earned or spent per level yet.")
+			ShowCardText(card, EmptyText("No Merchant's Favor earned or spent per level yet.", char))
 		end
 	end
 end

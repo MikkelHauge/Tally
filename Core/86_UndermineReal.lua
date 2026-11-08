@@ -67,6 +67,40 @@ local function CurrentLevel()
 	return SafeNumber(char and char.level) or 0
 end
 
+-- Where the character is standing when a gain is seen. Reals come from
+-- dungeon and raid bosses and from world bosses, so the instance or zone is
+-- the meaningful place to group them. The currency chat event fires right at
+-- loot, so this is normally read while still inside.
+local function CurrentPlace()
+	if type(GetInstanceInfo) == "function" then
+		local ok, name, instanceType = pcall(GetInstanceInfo)
+		name = ok and SafeString(name) or nil
+		instanceType = ok and SafeString(instanceType) or nil
+		if name and name ~= "" then
+			local kind = "world"
+			if instanceType == "party" then
+				kind = "dungeon"
+			elseif instanceType == "raid" then
+				kind = "raid"
+			elseif instanceType == "scenario" then
+				kind = "scenario"
+			elseif instanceType == "pvp" or instanceType == "arena" then
+				kind = "pvp"
+			end
+			return name, kind
+		end
+	end
+	local zoneFn = GetRealZoneText or GetZoneText
+	if type(zoneFn) == "function" then
+		local ok, zone = pcall(zoneFn)
+		zone = ok and SafeString(zone) or nil
+		if zone and zone ~= "" then
+			return zone, "world"
+		end
+	end
+	return nil
+end
+
 -- The whole currency tab, as the client reports it. Headers are kept so the
 -- diagnostic can show exactly what the client calls each entry.
 local function CurrencyList()
@@ -245,6 +279,7 @@ local function Ensure(char)
 	entry.byLevel = type(entry.byLevel) == "table" and entry.byLevel or {}
 	entry.daily = type(entry.daily) == "table" and entry.daily or {}
 	entry.recent = type(entry.recent) == "table" and entry.recent or {}
+	entry.bySource = type(entry.bySource) == "table" and entry.bySource or {}
 	return entry
 end
 
@@ -270,10 +305,11 @@ local function RecentSource(now)
 	return nil
 end
 
-local function AddRecent(entry, at, delta, level, source)
+local function AddRecent(entry, at, delta, level, source, place, placeKind)
 	local recent = entry.recent
 	recent[#recent + 1] = {
 		at = at, delta = delta, level = level, source = source,
+		place = place, placeKind = placeKind,
 	}
 	while #recent > RECENT_CAP do
 		table.remove(recent, 1)
@@ -397,6 +433,7 @@ local function Poll()
 
 	local level = CurrentLevel()
 	local day = Date("%Y-%m-%d", now)
+	local place, placeKind = CurrentPlace()
 	local levelRow = entry.byLevel[level]
 	if type(levelRow) ~= "table" then
 		levelRow = { earned = 0, spent = 0 }
@@ -417,13 +454,23 @@ local function Poll()
 			entry.bestGainAt = now
 			entry.bestGainLevel = level
 		end
+		-- Group gains by where they came from. Spends are not added here:
+		-- a purchase at Pix Xizzix is not a source of Reals.
+		local key = (place and placeKind) and (placeKind.."|"..place) or "unknown"
+		local bucket = entry.bySource[key]
+		if type(bucket) ~= "table" then
+			bucket = { name = place or "Unknown", kind = placeKind or "unknown", earned = 0 }
+			entry.bySource[key] = bucket
+		end
+		bucket.earned = (SafeNumber(bucket.earned) or 0) + delta
+		bucket.lastAt = now
 	else
 		local spent = -delta
 		entry.spent = (SafeNumber(entry.spent) or 0) + spent
 		levelRow.spent = (SafeNumber(levelRow.spent) or 0) + spent
 		dayRow.spent = (SafeNumber(dayRow.spent) or 0) + spent
 	end
-	AddRecent(entry, now, delta, level, RecentSource(now))
+	AddRecent(entry, now, delta, level, RecentSource(now), place, placeKind)
 	if ns.Touch then
 		pcall(ns.Touch, char, "currency."..UNDERMINE_KEY..".balance", now)
 	end
@@ -556,6 +603,14 @@ function ns.UndermineRealDiagnostics()
 			..", earned="..tostring(entry.earned)
 			..", spent="..tostring(entry.spent))
 		Add("undermine: firstAt="..tostring(entry.firstAt)..", lastAt="..tostring(entry.lastAt))
+		if type(entry.bySource) == "table" then
+			for _, bucket in pairs(entry.bySource) do
+				if type(bucket) == "table" and (tonumber(bucket.earned) or 0) > 0 then
+					Add("undermine: source "..tostring(bucket.name)
+						.." ("..tostring(bucket.kind)..") = "..tostring(bucket.earned))
+				end
+			end
+		end
 	else
 		Add("undermine: no stored entry for this character")
 	end

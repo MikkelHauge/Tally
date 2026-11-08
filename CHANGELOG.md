@@ -11,8 +11,12 @@ This file lists every tagged release and what changed. New releases go at the to
 
 - Economy -> Undermine Real: a new sub-tab next to Merchant's Favor tracks
   Tarnished Undermine Real (item 226404) per character, with balance, earned,
-  spent, today, by-level and recent changes. `/tally undermine` prints the live
-  read, the resolved currency and the stored record.
+  spent, today, recent changes and a by-source summary of the dungeons, raids
+  and world bosses they came from. `/tally undermine` prints the live read,
+  the resolved currency and the stored record.
+- Empty currency pages now say where to spend the currency: Pix Xizzix in
+  Booty Bay for Undermine Real, and the faction's trade post for Merchant's
+  Favor.
 
 **Fixed**
 

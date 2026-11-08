@@ -1,8 +1,9 @@
 -- Tally - the Economy tab's Undermine Real view.
 --
--- Tarnished Undermine Real is a Forever-only currency (item 226404). The
--- sub-tab and this whole file are only built when Core/86_UndermineReal.lua
--- says the client has it, so other clients never show an empty currency page.
+-- Tarnished Undermine Real is a Forever-only currency (item 226404), earned
+-- from dungeon, raid and world bosses and spent at Pix Xizzix. The sub-tab
+-- and this whole file are only built when Core/86_UndermineReal.lua says the
+-- client has it.
 local addonName, ns = ...
 
 local ACCENT, GREEN, RED, VALUE_COLOR, ROW_DETAIL_DIM,
@@ -27,10 +28,15 @@ end
 local UNDERMINE_KEY = 226404
 local undermineWidgets = {
 	tiles = {},
-	view = "levels",
-	levelOrder = "high",
+	view = "recent",
 	offset = 0,
 }
+
+local VENDOR_LINE = "You can use your Tarnished Undermine Real to purchase items from Pix Xizzix in Booty Bay."
+
+local function EmptyText(main)
+	return main.."\n\n|cff999999"..VENDOR_LINE.."|r"
+end
 
 local function EntryFor(char)
 	local currency = char and char.currency
@@ -78,74 +84,86 @@ local function AddTip(tile)
 	end)
 end
 
-local function LevelOrder(entry)
-	local levels = {}
-	for level, row in pairs(type(entry.byLevel) == "table" and entry.byLevel or {}) do
-		local earned = type(row) == "table" and Number(row.earned) or 0
-		local spent = type(row) == "table" and Number(row.spent) or 0
-		if (tonumber(level) or 0) > 0 and (earned > 0 or spent > 0) then
-			levels[#levels + 1] = tonumber(level)
-		end
+local function KindLabel(kind)
+	if kind == "dungeon" then
+		return "Dungeon"
+	elseif kind == "raid" then
+		return "Raid"
+	elseif kind == "scenario" then
+		return "Scenario"
+	elseif kind == "pvp" then
+		return "PvP"
+	elseif kind == "world" then
+		return "World"
 	end
-	table.sort(levels, function(a, b)
-		if undermineWidgets.levelOrder == "low" then
-			return a < b
-		end
-		return a > b
-	end)
-	return levels
+	return "Other"
 end
 
-local function LevelRows(entry)
-	local levels = LevelOrder(entry)
-	if #levels == 0 then
+-- Every place that produced Reals, most earned first.
+local function SourceOrder(entry)
+	local list = {}
+	local bySource = type(entry.bySource) == "table" and entry.bySource or {}
+	for key, bucket in pairs(bySource) do
+		if type(bucket) == "table" then
+			local earned = Number(bucket.earned)
+			if earned > 0 then
+				list[#list + 1] = {
+					key = key,
+					name = bucket.name or "Unknown",
+					kind = bucket.kind or "unknown",
+					earned = earned,
+					lastAt = bucket.lastAt,
+				}
+			end
+		end
+	end
+	table.sort(list, function(a, b)
+		if a.earned ~= b.earned then
+			return a.earned > b.earned
+		end
+		return tostring(a.name) < tostring(b.name)
+	end)
+	return list
+end
+
+local function SourceRows(entry)
+	local list = SourceOrder(entry)
+	if #list == 0 then
 		return nil
 	end
 	local rows = {
 		{
-			left = "Level", mid2 = "Earned", mid = "Spent", right = "Net",
-			leftColor = ACCENT, mid2Color = ACCENT, midColor = ACCENT, rightColor = ACCENT,
+			left = "Source", mid2 = "Earned", mid = "Last",
+			leftColor = ACCENT, mid2Color = ACCENT, midColor = ACCENT,
 		},
 	}
-	for index = 1, #levels do
-		local level = levels[index]
-		local row = entry.byLevel[level]
-		local earned = type(row) == "table" and Number(row.earned) or 0
-		local spent = type(row) == "table" and Number(row.spent) or 0
-		local net = earned - spent
-		local lines = {}
-		local recent = type(entry.recent) == "table" and entry.recent or {}
-		for recentIndex = #recent, 1, -1 do
-			local change = recent[recentIndex]
-			if type(change) == "table" and Number(change.level) == level then
-				local delta = Number(change.delta)
-				lines[#lines + 1] = {
-					text = (delta > 0 and "+" or "")..ns.FormatNumber(delta)
-						.."  "..(change.source or "Currency change")
-						.."  ·  "..ShortWhen(change.at),
-				}
-				if #lines >= 8 then
-					break
-				end
-			end
-		end
+	local total = 0
+	for index = 1, #list do
+		local item = list[index]
+		total = total + item.earned
 		rows[#rows + 1] = {
-			left = "Level "..level,
-			mid2 = ns.FormatNumber(earned),
-			mid = ns.FormatNumber(spent),
-			right = (net > 0 and "+" or "")..ns.FormatNumber(net),
+			left = CutRowText(item.name, 34),
+			mid2 = ns.FormatNumber(item.earned),
+			mid = item.lastAt and ShortWhen(item.lastAt) or "",
 			leftColor = ACCENT,
-			mid2Color = earned > 0 and GREEN or ROW_DETAIL_DIM,
-			midColor = spent > 0 and RED or ROW_DETAIL_DIM,
-			rightColor = net > 0 and GREEN or (net < 0 and RED or ROW_DETAIL_DIM),
+			mid2Color = GREEN,
+			midColor = ROW_DETAIL_DIM,
 			tip = {
-				kind = "note", title = "Level "..level,
-				lines = lines,
-				note = "Undermine Real changes Tally saw at this character level.",
-				key = "undermineLevel|"..level,
+				kind = "note", title = item.name,
+				lines = {
+					{ text = "Earned: "..ns.FormatNumber(item.earned) },
+					{ text = "Last: "..(item.lastAt and ns.FormatDate(item.lastAt) or "unknown") },
+					{ text = "Type: "..KindLabel(item.kind) },
+				},
+				key = "undermineSource|"..tostring(item.key),
 			},
 		}
 	end
+	rows[#rows + 1] = { divider = true }
+	rows[#rows + 1] = {
+		left = "Total", mid2 = ns.FormatNumber(total), mid = "",
+		leftColor = ACCENT, mid2Color = ACCENT, midColor = ACCENT,
+	}
 	return rows
 end
 
@@ -156,7 +174,7 @@ local function RecentRows(entry)
 	end
 	local rows = {
 		{
-			left = "Change", mid = "Level", right = "Amount",
+			left = "Source", mid = "When", right = "Amount",
 			leftColor = ACCENT, midColor = ACCENT, rightColor = ACCENT,
 		},
 	}
@@ -164,21 +182,24 @@ local function RecentRows(entry)
 		local change = recent[index]
 		if type(change) == "table" then
 			local delta = Number(change.delta)
-			local source = change.source or "Currency change"
+			local place = change.place or change.source or "Currency change"
+			local lines = {
+				{ text = (delta > 0 and "Gained " or "Spent ")..ns.FormatNumber(math.abs(delta)) },
+				{ text = ns.FormatDate(change.at) },
+			}
+			if change.place and change.source and change.source ~= change.place then
+				lines[#lines + 1] = { text = "Source: "..change.source }
+			end
 			rows[#rows + 1] = {
-				left = CutRowText(source, 32),
-				mid = "Level "..Number(change.level),
+				left = CutRowText(place, 34),
+				mid = ShortWhen(change.at),
 				right = (delta > 0 and "+" or "")..ns.FormatNumber(delta),
 				leftColor = delta > 0 and GREEN or RED,
 				midColor = ROW_DETAIL_DIM,
 				rightColor = delta > 0 and GREEN or RED,
 				tip = {
-					kind = "note", title = source,
-					lines = {
-						{ text = (delta > 0 and "Gained " or "Spent ")..ns.FormatNumber(math.abs(delta)) },
-						{ text = "Level "..Number(change.level) },
-						{ text = ns.FormatDate(change.at) },
-					},
+					kind = "note", title = place,
+					lines = lines,
 					key = "undermineChange|"..tostring(change.at).."|"..delta,
 				},
 			}
@@ -244,15 +265,8 @@ end
 
 local function UpdateButtons()
 	local viewButton = undermineWidgets.viewButton
-	local sortButton = undermineWidgets.sortButton
 	if viewButton then
-		SetCornerLabel(viewButton, undermineWidgets.view == "recent" and "recent" or "by level")
-	end
-	if sortButton then
-		sortButton:SetShown(undermineWidgets.view ~= "recent")
-		SetCornerLabel(sortButton, undermineWidgets.levelOrder == "low" and "level: asc" or "level: desc")
-		sortButton:ClearAllPoints()
-		sortButton:SetPoint("TOPRIGHT", viewButton, "TOPLEFT", -6, 0)
+		SetCornerLabel(viewButton, undermineWidgets.view == "sources" and "by source" or "recent")
 	end
 end
 
@@ -270,8 +284,10 @@ local function RefreshEconomyUndermineInner()
 	-- The currency can be read whether or not a character record is loaded,
 	-- so the tab never has to be blank: the balance below is the live figure
 	-- the client answers.
-	local amount = ns.UndermineReal and ns.UndermineReal.Read
-		and select(1, ns.UndermineReal.Read()) or nil
+	local amount, _, maxQuantity
+	if ns.UndermineReal and ns.UndermineReal.Read then
+		amount, _, maxQuantity = ns.UndermineReal.Read()
+	end
 	local entry = EntryFor(char)
 	if not entry and char and char == ns.GetChar() and ns.UndermineReal
 		and type(ns.UndermineReal.Poll) == "function" then
@@ -284,31 +300,31 @@ local function RefreshEconomyUndermineInner()
 
 	if not entry then
 		-- No record yet: show what the client actually reports and say that
-		-- the history begins with the first change Tally sees. An empty tab
-		-- next to a readable balance would just look broken.
+		-- the history begins with the first change Tally sees.
 		local name = char and ns.DisplayName and ns.DisplayName(char) or "this character"
 		if amount ~= nil then
-			RefreshTiles({ balance = amount, starting = 0, earned = 0, spent = 0 })
-			ShowCardText(card, "Balance: "..ns.FormatNumber(amount).." Reals. Tally has not started the history for "
-				..name.." yet, so the first change it sees will open the record.")
+			RefreshTiles({ balance = amount, starting = 0, earned = 0, spent = 0, maxQuantity = maxQuantity })
+			ShowCardText(card, EmptyText("You have "..ns.FormatNumber(amount)
+				.." Tarnished Undermine Real. Tally starts the history with your next change."))
 		else
 			RefreshTiles(nil)
-			ShowCardText(card, "No Tarnished Undermine Real collected for "..name.." yet. The client returned no value.")
+			ShowCardText(card, EmptyText("No Tarnished Undermine Real recorded for "
+				..name.." yet. Earn them from dungeon and raid bosses."))
 		end
 		ns.Trace("undermine: no record yet (key="..tostring(ns.charKey)..", retry="..tostring(ns.retryLoginAttempt)
 			..", client read="..tostring(amount)..")")
 		return
 	end
 	RefreshTiles(entry)
-	if undermineWidgets.view == "recent" then
-		local rows = RecentRows(entry)
-		if FillScrollingLines(card, rows or {}, undermineWidgets, "offset", "Recent changes", 42) == 0 then
-			ShowCardText(card, "No Undermine Real changes recorded yet.")
+	if undermineWidgets.view == "sources" then
+		local rows = SourceRows(entry)
+		if FillScrollingLines(card, rows or {}, undermineWidgets, "offset", "Where they came from", 44) == 0 then
+			ShowCardText(card, EmptyText("No Undermine Real earned yet. Earn them from dungeon and raid bosses."))
 		end
 	else
-		local rows = LevelRows(entry)
-		if FillScrollingLines(card, rows or {}, undermineWidgets, "offset", "By level", 44) == 0 then
-			ShowCardText(card, "No Undermine Real earned or spent per level yet.")
+		local rows = RecentRows(entry)
+		if FillScrollingLines(card, rows or {}, undermineWidgets, "offset", "Recent changes", 44) == 0 then
+			ShowCardText(card, EmptyText("No changes recorded yet."))
 		end
 	end
 end
@@ -338,12 +354,12 @@ local function BuildEconomyUndermine(page)
 	if ns.economyWidgets then
 		ns.economyWidgets.undermineCard = card
 	end
-	-- One set of columns for both views: Level, Earned, Spent, Net. The
-	-- recent view uses the left and two right-hand columns only.
+	-- The recent view uses the left, middle and right columns; the by-source
+	-- view uses the left and the two right-hand columns.
 	card.rowMidRight = 250
 	card.rowMid2Right = 390
 	AddCardTitleNote(card, "Undermine Real",
-		"Per character. The starting balance is the amount Tally first saw, so it is not counted as earned. Every later increase is Undermine Real earned and every decrease is spent, attributed to the character level it happened at. The corner buttons switch between the by-level table and the recent changes, and between highest and lowest level first.")
+		"Per character. Reals are earned from dungeon, raid and world bosses and spent at Pix Xizzix; the starting balance is the amount Tally first saw, so it is not counted as earned. The corner button switches between the recent changes and a summary of where the Reals came from.")
 	AddCardScrollbar(card, undermineWidgets, "offset", RefreshEconomyUndermine)
 	MakeCardScrollable(card, undermineWidgets, "offset", RefreshEconomyUndermine)
 	card:SetScript("OnUpdate", function()
@@ -359,7 +375,7 @@ local function BuildEconomyUndermine(page)
 	local viewButton = CreateCornerButton(card)
 	undermineWidgets.viewButton = viewButton
 	viewButton:SetScript("OnClick", function()
-		undermineWidgets.view = undermineWidgets.view == "recent" and "levels" or "recent"
+		undermineWidgets.view = undermineWidgets.view == "sources" and "recent" or "sources"
 		undermineWidgets.offset = 0
 		UpdateButtons()
 		RefreshEconomyUndermine()
@@ -367,28 +383,10 @@ local function BuildEconomyUndermine(page)
 	viewButton:SetScript("OnEnter", function(self)
 		GameTooltip:SetOwner(self, "ANCHOR_BOTTOMRIGHT")
 		GameTooltip:AddLine("Undermine Real view", ACCENT[1], ACCENT[2], ACCENT[3])
-		GameTooltip:AddLine("Switch between the by-level table and the recent changes.", 1, 1, 1, true)
+		GameTooltip:AddLine("Switch between the recent changes and the summary of where the Reals came from.", 1, 1, 1, true)
 		GameTooltip:Show()
 	end)
 	viewButton:SetScript("OnLeave", function()
-		GameTooltip:Hide()
-	end)
-
-	local sortButton = CreateCornerButton(card)
-	undermineWidgets.sortButton = sortButton
-	sortButton:SetScript("OnClick", function()
-		undermineWidgets.levelOrder = undermineWidgets.levelOrder == "low" and "high" or "low"
-		undermineWidgets.offset = 0
-		UpdateButtons()
-		RefreshEconomyUndermine()
-	end)
-	sortButton:SetScript("OnEnter", function(self)
-		GameTooltip:SetOwner(self, "ANCHOR_BOTTOMRIGHT")
-		GameTooltip:AddLine("Order of the levels", ACCENT[1], ACCENT[2], ACCENT[3])
-		GameTooltip:AddLine("Click to switch between highest level first and lowest level first.", 1, 1, 1, true)
-		GameTooltip:Show()
-	end)
-	sortButton:SetScript("OnLeave", function()
 		GameTooltip:Hide()
 	end)
 
