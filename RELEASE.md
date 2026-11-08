@@ -6,6 +6,80 @@ This is the complete release procedure for Tally, a statistics addon for
 A release is one version number, one commit, one tag, one GitHub release, one
 CurseForge file and one changelog entry. All six must agree.
 
+Section "Setting up a new addon" applies to every addon on this machine. The
+rest uses Tally as the example (its project ID, webhook ID and paths).
+
+---
+
+## Setting up a new addon (one-time)
+
+Do this once per addon, before its first release. It is the only part that is
+not about tagging.
+
+1. **Create the CurseForge project.** In the author dashboard, create a
+   project for the addon (World of Warcraft -> Addons) and tick the game
+   versions it should support.
+
+2. **Find the project ID.** It is the number in the project's dashboard URL:
+
+   ```
+   https://authors.curseforge.com/#/projects/<project-id>/files
+   ```
+
+   Example: `https://authors.curseforge.com/#/projects/1791127/files` means
+   the project ID is **1791127**. That number, not the project name or slug,
+   goes in the webhook URL.
+
+3. **Generate an API token.** Open
+   `https://authors.curseforge.com/#/settings/api-tokens`, create a token
+   (name it "Webhooks"), and copy it. It is shown once. The token is
+   account-level; the project is selected by the ID in the URL, so the same
+   token can serve every project you own. Treat it as a secret - never commit
+   it or put it in a repository file.
+
+4. **Add the GitHub webhook.** Open the repository's webhook settings:
+
+   ```
+   https://github.com/<owner>/<repo>/settings/hooks
+   ```
+
+   Example: `https://github.com/MikkelHauge/Tongues/settings/hooks`.
+   Choose **Add webhook** and use:
+
+   - **Payload URL:**
+     `https://www.curseforge.com/api/projects/<project-id>/package?token=<api-token>`
+     (for example `.../projects/1791127/package?token=...`)
+   - **Content type:** leave the default
+     (`application/x-www-form-urlencoded`) - CurseForge's docs say to leave
+     all other settings at their defaults.
+   - **Events:** just the **push** event.
+   - **Secret:** empty.
+   - **SSL verification:** enabled.
+   - **Active:** checked.
+
+   GitHub sends a `ping` immediately; a `200` in **Recent Deliveries** means
+   the URL and token are accepted.
+
+5. **Add `.pkgmeta`** at the repository root, next to the TOC:
+
+   ```yaml
+   package-as: <AddonFolderName>
+
+   ignore:
+     - README.md
+     - LICENSE
+     - CHANGELOG.md
+   ```
+
+   Without `package-as`, CurseForge names the folder after the project's URL
+   slug.
+
+6. **Make the first release** by bumping the version, committing and pushing a
+   tag - the release steps below. A brand-new project cannot be approved until
+   it has a file, so the first tag is what gives it one.
+
+After that, every release is just: bump, commit, push `main`, tag, push tag.
+
 ---
 
 ## 1. Facts and paths
@@ -177,6 +251,10 @@ The pushed tag makes GitHub deliver a `push` webhook; CurseForge packages the
 repository at that tag and creates a file named `Tally-v<version>.zip`.
 
 #### Webhook configuration (one-time)
+
+See **Setting up a new addon (one-time)** above for creating the project,
+finding the project ID, generating the API token and adding the GitHub
+webhook. The values below are the ones to use.
 
 CurseForge's Automatic Packaging documentation specifies the payload URL and
 says to **leave all other GitHub webhook settings at their defaults**:
