@@ -1,8 +1,8 @@
 -- Tally - the Combat tab's fights and deaths sub-view.
 local addonName, ns = ...
 
-local ACCENT, SetTile, CreateTileRow, DisplayChar, PercentText, CreateListCard, CATEGORY_HEAD_COLOR, FillCardRows, ShowCardText, AddCardTitleNote, FillScrollingLines, MakeCardScrollable, CreateCornerButton, SetCornerLabel, ROW_DIM, combatWidgets =
-	ns.ACCENT, ns.SetTile, ns.CreateTileRow, ns.DisplayChar, ns.PercentText, ns.CreateListCard, ns.CATEGORY_HEAD_COLOR, ns.FillCardRows, ns.ShowCardText, ns.AddCardTitleNote, ns.FillScrollingLines, ns.MakeCardScrollable, ns.CreateCornerButton, ns.SetCornerLabel, ns.ROW_DIM, ns.combatWidgets
+local ACCENT, SetTile, CreateTileRow, DisplayChar, PercentText, CreateListCard, CATEGORY_HEAD_COLOR, FillCardRows, ShowCardText, AddCardTitleNote, FillScrollingLines, MakeCardScrollable, AddCardScrollbar, CreateCornerButton, SetCornerLabel, ROW_DIM, combatWidgets =
+	ns.ACCENT, ns.SetTile, ns.CreateTileRow, ns.DisplayChar, ns.PercentText, ns.CreateListCard, ns.CATEGORY_HEAD_COLOR, ns.FillCardRows, ns.ShowCardText, ns.AddCardTitleNote, ns.FillScrollingLines, ns.MakeCardScrollable, ns.AddCardScrollbar, ns.CreateCornerButton, ns.SetCornerLabel, ns.ROW_DIM, ns.combatWidgets
 
 -- The orders the deaths-by-zone card can be listed in, and the short label
 -- its button carries for each. It cycles them, like the records card's.
@@ -156,21 +156,20 @@ local function RefreshCombatFights()
 	SetTile(combatWidgets.tiles[3], ns.FormatDuration(inCombat), inCombatSub)
 	SetTile(combatWidgets.tiles[4], ns.FormatDuration(char.alive), PercentText(char.alive, tracked).." of tracked time")
 
-	-- The most recent deaths, newest first: zone on the left, date and time on
-	-- the right. Fifty are kept and the first is never dropped; ten are listed
-	-- on the time-breakdown card, and the first death is named when it is
-	-- older than those. The killer only ever comes from the combat log, so on
-	-- a client without it the line is just the zone.
+	-- Every death Tally keeps, newest first: zone on the left, date and time
+	-- on the right. The log holds the first death plus the most recent ones
+	-- (see TUNING.deathLogCap), and the card scrolls, so nothing is hidden
+	-- behind an "... and N more" row. The killer only ever comes from the
+	-- combat log, so on a client without it the line is just the zone.
 	local deathLog = combat.deathLog or {}
 	if #deathLog == 0 and combat.lastDeath then
 		-- Records written before the log was kept still hold the most recent
 		-- death, which is a real reading and is listed as such.
 		deathLog = { combat.lastDeath }
 	end
-	local shownDeaths = 10
 	local recentDeaths = {}
-	local function DeathLine(death, prefix)
-		local left = (prefix or "")..(death.zone or "?")
+	local function DeathLine(death)
+		local left = death.zone or "?"
 		if death.killer then
 			left = left.."  ·  "..death.killer
 		end
@@ -179,13 +178,8 @@ local function RefreshCombatFights()
 			right = ns.FormatDateTime(death.at),
 		}
 	end
-	for index = #deathLog, math.max(1, #deathLog - shownDeaths + 1), -1 do
-		DeathLine(deathLog[index], nil)
-	end
-	if #deathLog > shownDeaths then
-		-- The first death is kept for good, so it is named even when it is
-		-- older than the window above.
-		DeathLine(deathLog[1], "first death: ")
+	for index = #deathLog, 1, -1 do
+		DeathLine(deathLog[index])
 	end
 	local function AppendRecentDeaths(entries)
 		if #recentDeaths == 0 then
@@ -228,7 +222,12 @@ local function RefreshCombatFights()
 	breakdown[#breakdown + 1] = { left = "Deaths", right = ns.FormatNumber(combat.deaths) }
 	AppendKillRecords(breakdown, combat, fights, tracked)
 	AppendRecentDeaths(breakdown)
-	FillCardRows(combatWidgets.first, breakdown, 50)
+	-- Scroll rather than cap: a character with many deaths gets every row, and
+	-- the title shows the visible window (for example "Time breakdown - 1-21
+	-- of 28"). The wheel and the bar move it.
+	if FillScrollingLines(combatWidgets.first, breakdown, combatWidgets, "timeScrollOffset", "Time breakdown", 50) == 0 then
+		ShowCardText(combatWidgets.first, "No data yet.")
+	end
 
 	-- The deaths card is the per-zone count, every zone that has one, in a
 	-- scrolling window; the last few deaths themselves are listed on the left
@@ -274,7 +273,11 @@ local function BuildCombatFights(fights)
 	combatWidgets.first = CreateListCard(fights, 0, -88, 359, 372, "Time breakdown")
 	combatWidgets.deaths = CreateListCard(fights, 371, -88, 359, 372, "Deaths by zone")
 	AddCardTitleNote(combatWidgets.first, "Time breakdown",
-		"A fight is one uninterrupted stretch in combat; in combat and out of combat add up to tracked time, and AFK is shown beside them. Below the time, the combat records and the recent deaths. The per-creature and per-zone kill lists are on the Kills sub-view.")
+		"A fight is one uninterrupted stretch in combat; in combat and out of combat add up to tracked time, and AFK is shown beside them. Below the time, the combat records and every recent death. The card scrolls when the list is long; the per-creature and per-zone kill lists are on the Kills sub-view.")
+	-- The breakdown grows with the death log, so it scrolls instead of
+	-- collapsing the tail into "... and N more".
+	AddCardScrollbar(combatWidgets.first, combatWidgets, "timeScrollOffset", function() ns.RefreshCombat() end)
+	MakeCardScrollable(combatWidgets.first, combatWidgets, "timeScrollOffset", function() ns.RefreshCombat() end)
 	AddCardTitleNote(combatWidgets.deaths, "Deaths by zone",
 		"One count per zone or instance the character died in; a death inside a dungeon is counted there, not in the zone outside. The order button sorts by most, fewest, A-Z or Z-A.")
 	-- Every zone is kept, so this card takes the wheel rather than dropping

@@ -5,6 +5,17 @@ This file lists every tagged release and what changed. New releases go at the to
 
 ---
 
+## 20261108 - 8 November 2026
+
+**Fixed**
+
+- Combat -> Fights & deaths: the Time breakdown card now scrolls. Every death
+  Tally keeps is listed, newest first, instead of the list ending in
+  "... and N more". The wheel and a scrollbar move it, and the title shows the
+  visible range.
+
+---
+
 ## 20261107.1 - 7 November 2026
 
 **Fixed**
