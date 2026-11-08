@@ -16,6 +16,13 @@ rest uses Tally as the example (its project ID, webhook ID and paths).
 Do this once per addon, before its first release. It is the only part that is
 not about tagging.
 
+**This part is manual.** Creating the CurseForge project, generating the API
+token and adding the GitHub webhook all happen in a browser (the CurseForge
+author dashboard and the repository's GitHub settings). There is no repository
+command that creates them, and a coding agent cannot do it without your
+CurseForge account. Once the webhook exists, every release after that is
+automatic from the tag push.
+
 1. **Create the CurseForge project.** In the author dashboard, create a
    project for the addon (World of Warcraft -> Addons) and tick the game
    versions it should support.
