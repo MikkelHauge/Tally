@@ -364,56 +364,134 @@ local function IsLeader()
 end
 
 local MAX_GUILD_HISTORY = 20
+-- How long the client may fail to name the guild before Tally accepts that the
+-- character has really left it. GetGuildInfo returns nil for a stretch after a
+-- login, a /reload and some zoning screens; a single nil used to be written as
+-- a leave, and the next named reading as a fresh join, which split one
+-- membership into many entries seconds apart.
+local GUILD_UNKNOWN_GRACE = 60
+-- At least this many ticks must have been observed before a guildless reading
+-- is believed, so a ticker that was paused across a long load cannot confirm
+-- one from two answers alone.
+local GUILD_UNKNOWN_TICKS = 10
+-- A different name is only believed once it has been read on this many
+-- consecutive ticks, so one bad reading cannot split a membership either.
+local GUILD_SWITCH_TICKS = 2
+
+-- The reading that differs from the confirmed guild, held until it has been
+-- seen long enough to be believed. Deliberately not saved: a login or reload
+-- starts a clean window, so a blip recorded at logout cannot become a "left"
+-- on the next login.
+local pendingGuild, pendingName, pendingSince, pendingTicks
 
 local function UpdateGuild(char, social, now)
 	local name = GuildName("player")
+	if name == "" then
+		name = nil
+	end
 	local guild = social.guild
 	local history = guild.history or {}
 	guild.history = history
 
-	local function CloseHistory(oldName)
+	if pendingGuild ~= guild then
+		pendingGuild, pendingName, pendingSince, pendingTicks = guild, nil, 0, 0
+	end
+
+	local function ForgetPending()
+		pendingName, pendingSince, pendingTicks = nil, 0, 0
+	end
+
+	local function CloseHistory(oldName, at)
 		for index = #history, 1, -1 do
 			local entry = history[index]
 			if entry.name == oldName and entry.leftAt == nil then
-				entry.leftAt = now
+				entry.leftAt = at
 				return
 			end
 		end
 	end
 
 	-- The first observation only sets the baseline: a character who was
-	-- already guilded when Tally met it did not join today. The history entry
-	-- is marked so the UI can say the join date is unknown rather than invent
-	-- one.
+	-- already guilded when Tally met it did not join today. While the client
+	-- has not named a guild yet the window stays open, so a late answer is
+	-- still read as the baseline rather than as an invented join.
 	if not guild.initialized then
-		guild.name = name
-		guild.initialized = true
 		if name then
+			guild.initialized = true
+			guild.name = name
 			history[#history + 1] = { name = name, joinedAt = now, baseline = true }
+			ForgetPending()
+			return
 		end
+		if pendingName == nil then
+			pendingSince = now
+		end
+		pendingName, pendingTicks = false, (pendingTicks or 0) + 1
+		if (now - (pendingSince or now)) < GUILD_UNKNOWN_GRACE
+			or pendingTicks < GUILD_UNKNOWN_TICKS then
+			return
+		end
+		-- Still guildless after the grace: the character really has no guild.
+		guild.initialized = true
+		guild.name = nil
+		ForgetPending()
 		return
 	end
+
+	-- The confirmed guild, read again: nothing changed.
 	if name == guild.name then
+		ForgetPending()
 		return
 	end
+
+	-- A different reading is a candidate, not a fact yet. nil is stored as
+	-- false, because a Lua table cannot hold a nil value.
+	local sameCandidate = (pendingTicks or 0) > 0 and pendingName == (name or false)
+	if not sameCandidate then
+		pendingName, pendingSince, pendingTicks = name or false, now, 0
+	end
+	pendingTicks = pendingTicks + 1
+
+	local confirmed
+	if name == nil then
+		-- Guildless must persist for the whole grace, with real ticks seen.
+		confirmed = (now - (pendingSince or now)) >= GUILD_UNKNOWN_GRACE
+			and pendingTicks >= GUILD_UNKNOWN_TICKS
+	else
+		-- A named guild simply has to be read twice in a row.
+		confirmed = pendingTicks >= GUILD_SWITCH_TICKS
+	end
+	if not confirmed then
+		return
+	end
+
+	local changedAt = pendingSince or now
 	if guild.name then
-		guild.leaves[#guild.leaves + 1] = { at = now, name = guild.name }
+		guild.leaves[#guild.leaves + 1] = { at = changedAt, name = guild.name }
 		if #guild.leaves > MAX_GUILD_HISTORY then
 			table.remove(guild.leaves, 1)
 		end
-		CloseHistory(guild.name)
+		CloseHistory(guild.name, changedAt)
 	end
 	if name then
-		guild.joins[#guild.joins + 1] = { at = now, name = name }
+		guild.joins[#guild.joins + 1] = { at = changedAt, name = name }
 		if #guild.joins > MAX_GUILD_HISTORY then
 			table.remove(guild.joins, 1)
 		end
-		history[#history + 1] = { name = name, joinedAt = now }
+		history[#history + 1] = { name = name, joinedAt = changedAt }
 		while #history > MAX_GUILD_HISTORY do
 			table.remove(history, 1)
 		end
+	else
+		-- Every tick but the confirming one was counted as guild time while
+		-- the window was open; move exactly those to guildless, where they
+		-- belong now.
+		local graceSeconds = math.max(0, (pendingTicks or 1) - 1)
+		guild.seconds = math.max(0, (guild.seconds or 0) - graceSeconds)
+		guild.guildless = (guild.guildless or 0) + graceSeconds
 	end
 	guild.name = name
+	ForgetPending()
 end
 
 function ns.SocialTick(char, now)

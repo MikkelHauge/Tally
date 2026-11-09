@@ -308,21 +308,43 @@ local function AddInteractions(lines, social)
 	local history = guild.history or {}
 	local byGuild = (social.chat and social.chat.byGuild) or {}
 	local now = (ns.Now and ns.Now()) or time()
-	local listed = 0
-	local shownMessages = {}
+	-- One heading per guild, with every membership of it underneath. A real
+	-- rejoin therefore reads as a second membership of the same guild rather
+	-- than as a second guild, and the lifetime message count stays in one
+	-- place. Groups keep the order of their newest membership.
+	local order, groups = {}, {}
 	for index = #history, 1, -1 do
 		local entry = history[index]
 		if entry.name then
-			-- Same blank row between guilds as between races and classes.
-			if listed > 0 then
+			local group = groups[entry.name]
+			if not group then
+				group = { name = entry.name, memberships = {} }
+				groups[entry.name] = group
+				order[#order + 1] = group
+			end
+			group.memberships[#group.memberships + 1] = entry
+			if entry.leftAt == nil then
+				group.current = true
+			end
+		end
+	end
+	for index = 1, #order do
+		local group = order[index]
+		-- Same blank row between guilds as between races and classes.
+		if index > 1 then
+			lines[#lines + 1] = {}
+		end
+		lines[#lines + 1] = {
+			left = group.name..(group.current and "   (current)" or ""),
+			leftColor = ACCENT,
+		}
+		for position = 1, #group.memberships do
+			local entry = group.memberships[position]
+			-- A blank row between memberships of one guild, the same way the
+			-- entries above are separated.
+			if position > 1 then
 				lines[#lines + 1] = {}
 			end
-			listed = listed + 1
-			local current = entry.leftAt == nil
-			lines[#lines + 1] = {
-				left = entry.name..(current and "   (current)" or ""),
-				leftColor = ACCENT,
-			}
 			local since = entry.joinedAt
 			local untilAt = entry.leftAt or now
 			if since then
@@ -337,16 +359,11 @@ local function AddInteractions(lines, social)
 			if entry.leftAt then
 				AddLine(lines, "   Left", ns.FormatDate(entry.leftAt))
 			end
-			-- The same guild can appear more than once after rejoining. Show
-			-- its lifetime message count once, under the newest membership.
-			if not shownMessages[entry.name] then
-				shownMessages[entry.name] = true
-				local sent = tonumber(byGuild[entry.name]) or 0
-				AddLine(lines, "   Messages sent", ns.FormatNumber(sent))
-			end
 		end
+		local sent = tonumber(byGuild[group.name]) or 0
+		AddLine(lines, "   Messages sent", ns.FormatNumber(sent))
 	end
-	if listed == 0 then
+	if #order == 0 then
 		AddLine(lines, "No guild history yet", "none")
 	end
 end
@@ -399,7 +416,7 @@ local function BuildSocialPage(page)
 	local interactions = CreateListCard(page, 371, -88, 359, 326, "Interactions")
 	socialWidgets.interactions = interactions
 	AddCardTitleNote(interactions, "Interactions",
-		"Every race and class this character has grouped with, traded with, whispered or duelled, with the group time and the counts recorded for each, followed by the guilds the character has been in. A player's race and class is read from the client when possible and remembered by name for this character, so a later whisper or trade can still be counted even after they are out of sight. A final Unknown row collects interactions whose race and class the client could not name.")
+		"Every race and class this character has grouped with, traded with, whispered or duelled, with the group time and the counts recorded for each, followed by the guilds the character has been in, one heading per guild with each membership below it. A player's race and class is read from the client when possible and remembered by name for this character, so a later whisper or trade can still be counted even after they are out of sight. A final Unknown row collects interactions whose race and class the client could not name.")
 	AddCardScrollbar(interactions, socialWidgets, "interactionsOffset", RefreshSocial)
 	MakeCardScrollable(interactions, socialWidgets, "interactionsOffset", RefreshSocial)
 

@@ -6,7 +6,7 @@
 -- flags are left in place: an older build can still read the same data.
 local addonName, ns = ...
 
-local CURRENT_SCHEMA = 10
+local CURRENT_SCHEMA = 11
 local MIGRATIONS = {}
 
 -- 1: the minimap icon moved from a free position to the minimap's ring.
@@ -632,6 +632,70 @@ MIGRATIONS[10] = function(db)
 	local settings = db.settings and db.settings.professionNotify
 	if type(settings) == "table" and settings.loginDelay == 20 then
 		settings.loginDelay = 15
+	end
+end
+
+-- 11: guild memberships split by an unanswered guild lookup. GetGuildInfo
+-- returns nil for a stretch after a login or /reload; the one-second poll read
+-- each nil as a real leave and the next named reading as a rejoin, so a single
+-- membership could become many entries seconds apart. Merge same-name entries
+-- whose gap is too short to be a real rejoin; a longer gap is kept.
+local GUILD_REJOIN_WINDOW = 120
+
+MIGRATIONS[11] = function(db)
+	local merged = 0
+	for key, record in pairs(db.chars or {}) do
+		local guild = type(record) == "table" and record.social and record.social.guild
+		local history = type(guild) == "table" and guild.history
+		if type(history) == "table" and #history > 1 then
+			local moved = 0
+			local charMerged = 0
+			local index = 1
+			while index < #history do
+				local first, second = history[index], history[index + 1]
+				local gap = first and second and first.leftAt and second.joinedAt
+					and (second.joinedAt - first.leftAt) or nil
+				if first and second and first.name and second.name
+					and first.name == second.name and gap and gap >= 0
+					and gap <= GUILD_REJOIN_WINDOW then
+					-- One membership was cut in two by the blip: keep the
+					-- first start, take the second end, and fold the gap back
+					-- into the guild's own time. The next entry may continue
+					-- the same membership, so the index does not advance.
+					first.leftAt = second.leftAt
+					first.baseline = first.baseline or second.baseline
+					moved = moved + gap
+					table.remove(history, index + 1)
+					merged = merged + 1
+					charMerged = charMerged + 1
+				else
+					index = index + 1
+				end
+			end
+			if moved > 0 then
+				guild.seconds = (guild.seconds or 0) + moved
+				guild.guildless = math.max(0, (guild.guildless or 0) - moved)
+			end
+			if charMerged > 0 then
+				-- The join/leave lists are not shown, but rebuild them from
+				-- the cleaned history so they describe the same memberships.
+				local joins, leaves = {}, {}
+				for position = 1, #history do
+					local entry = history[position]
+					if entry.joinedAt and not entry.baseline then
+						joins[#joins + 1] = { at = entry.joinedAt, name = entry.name }
+					end
+					if entry.leftAt then
+						leaves[#leaves + 1] = { at = entry.leftAt, name = entry.name }
+					end
+				end
+				guild.joins, guild.leaves = joins, leaves
+				ns.Trace("guild history: "..charMerged.." split memberships merged for "..tostring(key))
+			end
+		end
+	end
+	if merged > 0 then
+		ns.Trace("guild history: "..merged.." split memberships merged in total")
 	end
 end
 
