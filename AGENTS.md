@@ -3,6 +3,16 @@
 Tally is a statistics addon for **WoW Forever 1.60.1** (`## Interface: 16001`),
 written in Lua. The repository root is the addon root: `Tally.toc` is here.
 
+## Shared workflow (all addons)
+
+The workspace `AGENTS.md` has the rules shared by Tally, Ammonia and Tongues:
+the user tests manually in WoW Forever, installs go to
+`G:\Games\World of Warcraft\_forever_\Interface\AddOns\Tally`, one backup of
+the installed version is kept at
+`D:\projects\Convenient\backups\Tally-previous` before each install, and
+features/fixes use `feature/...` / `fix/...` branches merged to `main` only
+after the user's in-game test passes.
+
 ## Releasing
 
 **Before doing anything release-related, stop and read
@@ -35,6 +45,10 @@ powershell -NoProfile -File D:\projects\Convenient\tools\check-lua.ps1
 # Exporter syntax check
 cd D:\projects\Convenient\Tally-Tools
 python -m py_compile export_tally.py
+
+# Back up the installed copy before replacing it (one version back)
+Remove-Item -Recurse -Force D:\projects\Convenient\backups\Tally-previous -ErrorAction SilentlyContinue
+Copy-Item -Recurse -Force "G:\Games\World of Warcraft\_forever_\Interface\AddOns\Tally" "D:\projects\Convenient\backups\Tally-previous"
 
 # Copy the addon into the game for testing
 powershell -NoProfile -ExecutionPolicy Bypass -File D:\projects\Convenient\Tally-Tools\install-test.ps1
