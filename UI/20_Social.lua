@@ -109,7 +109,7 @@ local function AddTotals(lines, char, social)
 		local sent = tonumber((socialChat.byGuild or {})[guild.name]) or 0
 		AddLine(lines, "Messages sent in this guild", ns.FormatNumber(sent))
 	end
-	AddLine(lines, "Time in guild", Duration(guild.seconds))
+	AddLine(lines, "Time in any guild", Duration(guild.seconds))
 	AddLine(lines, "Time without a guild", Duration(guild.guildless))
 
 	AddHeader(lines, "Public chat")
@@ -409,14 +409,14 @@ local function BuildSocialPage(page)
 	local card = CreateListCard(page, 0, -88, 359, 326, "Social")
 	socialWidgets.card = card
 	AddCardTitleNote(card, "Social",
-		"Time grouped is counted once a second from the moment the group forms. Mail is seeded the first time a mailbox is opened, so old letters are not counted as new. Everything is stored locally in TallyDB.")
+		"Time grouped, time in any guild and time without a guild are counted once a second while Tally is running, so only time you were online counts. Mail is seeded the first time a mailbox is opened, so old letters are not counted as new. Everything is stored locally in TallyDB.")
 	AddCardScrollbar(card, socialWidgets, "socialOffset", RefreshSocial)
 	MakeCardScrollable(card, socialWidgets, "socialOffset", RefreshSocial)
 
 	local interactions = CreateListCard(page, 371, -88, 359, 326, "Interactions")
 	socialWidgets.interactions = interactions
 	AddCardTitleNote(interactions, "Interactions",
-		"Every race and class this character has grouped with, traded with, whispered or duelled, with the group time and the counts recorded for each, followed by the guilds the character has been in, one heading per guild with each membership below it. A player's race and class is read from the client when possible and remembered by name for this character, so a later whisper or trade can still be counted even after they are out of sight. A final Unknown row collects interactions whose race and class the client could not name.")
+		"Every race and class this character has grouped with, traded with, whispered or duelled, with the group time and the counts recorded for each, followed by the guilds the character has been in, one heading per guild with each membership below it. A guild's Member for is calendar time since the join date, so it includes days offline; the Social card's time in any guild is the time Tally watched. A player's race and class is read from the client when possible and remembered by name for this character, so a later whisper or trade can still be counted even after they are out of sight. A final Unknown row collects interactions whose race and class the client could not name.")
 	AddCardScrollbar(interactions, socialWidgets, "interactionsOffset", RefreshSocial)
 	MakeCardScrollable(interactions, socialWidgets, "interactionsOffset", RefreshSocial)
 
