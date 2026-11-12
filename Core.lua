@@ -2217,8 +2217,18 @@ end
 -- ADDON_ACTION_BLOCKED (silent). Every refusal is traced; names with a
 -- known shape are switched off or reported once so they cannot repeat
 -- unnoticed.
+--
+-- The event is delivered to every addon that registered it, not only to the
+-- one it names. A refusal belonging to another addon is only traced: acting
+-- on it could switch off one of Tally's own features for someone else's call,
+-- and the chat line would wrongly say Tally was the addon that was blocked.
 local function OnBlockedAction(eventName, which, blockedFunction)
 	blockedFunction = tostring(blockedFunction or "?")
+	if type(which) == "string" and which ~= ""
+		and string.lower(which) ~= string.lower(addonName) then
+		ns.Trace("blocked (other addon): "..tostring(eventName or "?")..", addon="..which..", function="..blockedFunction)
+		return
+	end
 	ns.Trace("blocked: "..tostring(eventName or "?")..", addon="..tostring(which or "?")..", function="..blockedFunction)
 	if string.find(blockedFunction, "RequestTimePlayed", 1, true) then
 		if not ns.db.settings.playedSyncBlocked then
