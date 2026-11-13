@@ -1505,6 +1505,17 @@ local function OnTimePlayedMsg(totalTime, levelTime)
 	ns.Trace("client /played reply: total "..tostring(totalTime).."s, this level "..tostring(levelTime).."s")
 	local now = Now()
 	local level = UnitLevel("player") or char.level
+	-- PLAYER_LEVEL_UP can fire before UnitLevel reports the new level on this
+	-- client, and the /played reply can be handled inside that gap. The
+	-- pending snapshot is the event's own level, so while its window is fresh
+	-- it is the authority for this reply; trusting UnitLevel alone announced
+	-- the level that had just ended and left the new row pending.
+	local pendingLevel = pendingLevelSnapshot and pendingLevelSnapshot.level
+	if pendingLevel and pendingLevel > level
+		and now - (pendingLevelSnapshot.at or now) <= TUNING.levelReplyFor then
+		ns.Trace("played reply: UnitLevel "..tostring(level)..", pending level "..tostring(pendingLevel).."; using the pending level")
+		level = pendingLevel
+	end
 	local played = char.played
 	-- A reply without the "this level" figure keeps the last one for the
 	-- display, but it cannot pin where the level began, so the reading is
@@ -1543,7 +1554,12 @@ local function OnTimePlayedMsg(totalTime, levelTime)
 	if not pendingEntry and ns.MilestoneContext then
 		fallbackZone, fallbackKind = ns.MilestoneContext()
 	end
+	-- Whether this reply was applied to the level-up that opened the window.
+	-- Only then may it announce that level; a reply for another level must not
+	-- print a number and must not leave the row pending.
+	local appliedPending = false
 	if pendingEntry and pendingEntry.level == level then
+		appliedPending = true
 		local endedAt = pendingEntry.at or now
 		pendingEntry.total = totalTime
 		pendingEntry.levelTime = levelTime
@@ -1633,6 +1649,9 @@ local function OnTimePlayedMsg(totalTime, levelTime)
 			end
 		end
 		finishedLevel, finishedGap = previousLevel, gap
+		if pendingLevelSnapshot and pendingLevelSnapshot.level == level then
+			appliedPending = true
+		end
 		-- A time is claimed only when the finished level can be measured:
 		-- one level gained (no gap) and a start the client can pin. Both
 		-- ends are the total at a level's start, which is the reading minus
@@ -1680,10 +1699,15 @@ local function OnTimePlayedMsg(totalTime, levelTime)
 		-- Only a reply that arrives while the level-up is still fresh may
 		-- announce it. A late reply, or a pending row recovered after a
 		-- reload, still finalises the record above but must not print a
-		-- "Level X reached" message long after the fact.
-		local announcementAge = now - (pendingLevelSnapshot.at or now)
+		-- "Level X reached" message long after the fact. The line is printed
+		-- only when this reply was applied to that level-up: a reply handled
+		-- while the engine still reported the old level must not announce the
+		-- wrong number, and it must not leave the row pending for the next
+		-- sync to recover.
+		local snapshot = pendingLevelSnapshot
+		local announcementAge = now - (snapshot.at or now)
 		pendingLevelSnapshot = nil
-		if ns.db.settings.announceLevelUps and announcementAge <= TUNING.levelReplyFor then
+		if appliedPending and ns.db.settings.announceLevelUps and announcementAge <= TUNING.levelReplyFor then
 			local totalText = ns.FormatDuration(totalTime).." played in total"
 			if finishedSeconds and finishedPartial then
 				ns.Print(string.format("Level %d reached - at least %s on level %d, %s.", level, ns.FormatDuration(finishedSeconds), finishedLevel, totalText))
@@ -1694,6 +1718,10 @@ local function OnTimePlayedMsg(totalTime, levelTime)
 			else
 				ns.Print(string.format("Level %d reached - %s.", level, totalText))
 			end
+		elseif not appliedPending and snapshot.entry and snapshot.entry.pending then
+			snapshot.entry.pending = nil
+			snapshot.entry.timingMissing = true
+			ns.Trace("played reply did not fill pending level "..tostring(snapshot.level).."; timing left unknown")
 		end
 	end
 	if ns.OnDataTick then
@@ -1755,6 +1783,17 @@ local function OnLevelUp(newLevel)
 			pendingLevelSnapshot.entry.timingMissing = true
 		end
 		pendingLevelSnapshot = nil
+	end
+	-- A /played reply that never matched its level-up can leave a pending row
+	-- behind. Once the character has moved past it that reply can no longer be
+	-- matched (only the newest row is recovered), so say the timing is missing
+	-- instead of keeping the row pending forever.
+	for index = #char.levels.history, 1, -1 do
+		local older = char.levels.history[index]
+		if older.level and older.level < newLevel and older.pending then
+			older.pending = nil
+			older.timingMissing = true
+		end
 	end
 	local entry = {
 		level = newLevel, at = at, zone = zone, zoneKind = zoneKind,
