@@ -12,6 +12,7 @@ local Now = ns.Now
 local currentZone
 local inInstance = false
 local currentInstance
+local currentRunHasKill = false
 local lastAreaKey
 local taxiActive = false
 local taxiResumeUntil = 0    -- a restored flight is trusted briefly while the client settles
@@ -178,21 +179,21 @@ local function UpdateArea()
 				end
 				local dungeon = char.explore.dungeons[name]
 				if not dungeon then
-					-- A new instance is a run however the character got there.
-					dungeon = { entered = 1, bosses = 0, first = Now(), updatedAt = Now(), kind = instanceType }
+					-- The record exists for the time spent, but the run is only
+					-- counted once a kill happens in it.
+					dungeon = { entered = 0, bosses = 0, first = Now(), updatedAt = Now(), kind = instanceType }
 					char.explore.dungeons[name] = dungeon
-				elseif not firstOfSession and not dungeon.byTick then
-					dungeon.entered = dungeon.entered + 1
+					currentRunHasKill = false
+				else
+					-- A login or reload inside a known instance is not a new
+					-- run; entering normally is, once a kill is seen.
+					currentRunHasKill = firstOfSession
 				end
 				if not dungeon.kind and instanceType then
 					dungeon.kind = instanceType
 				end
-				dungeon.byTick = nil
 				dungeon.last = Now()
 				dungeon.updatedAt = Now()
-				if ns.NoteDungeonMilestone then
-					ns.NoteDungeonMilestone(char)
-				end
 				if not firstOfSession then
 					NoteVisit(char.explore, name, Now(), true, instanceType)
 				end
@@ -202,9 +203,38 @@ local function UpdateArea()
 		NoteZone(zone, not firstOfSession)
 		lastPosition = nil -- zone changes break the travel baseline
 	end
+	if not nowInInstance then
+		currentRunHasKill = false
+	end
 	inInstance = nowInInstance and true or false
 	currentInstance = nowInInstance and (instanceName or zone) or nil
 end
+
+-- A run counts once something is actually killed in the instance. Entering,
+-- dying and running back does not. The first recorded kill (loot, experience
+-- line, or boss) marks the run.
+local function NoteInstanceKill()
+	if not inInstance or not currentInstance or currentRunHasKill then
+		return
+	end
+	local char = ns.GetChar()
+	if not char or not ns.Tracks("explore") then
+		return
+	end
+	currentRunHasKill = true
+	local dungeon = char.explore.dungeons[currentInstance]
+	if not dungeon then
+		dungeon = { entered = 0, bosses = 0, first = Now(), kind = CurrentInstanceKind() }
+		char.explore.dungeons[currentInstance] = dungeon
+	end
+	dungeon.entered = (dungeon.entered or 0) + 1
+	dungeon.last = Now()
+	dungeon.updatedAt = Now()
+	if ns.NoteDungeonMilestone then
+		ns.NoteDungeonMilestone(char)
+	end
+end
+ns.NoteInstanceKill = NoteInstanceKill
 
 local function OnEncounterEnd(encounterName, success)
 	if success ~= 1 then
@@ -219,6 +249,7 @@ local function OnEncounterEnd(encounterName, success)
 		ns.NoteBossMilestone(char.explore.bosses)
 	end
 	if inInstance and currentInstance then
+		NoteInstanceKill()
 		local dungeon = char.explore.dungeons[currentInstance]
 		if not dungeon then
 			dungeon = { entered = 0, bosses = 0 }
@@ -321,16 +352,13 @@ local function ExploreTick(char, explore, session, dead)
 	if explore and inInstance and currentInstance then
 		local dungeon = char.explore.dungeons[currentInstance]
 		if not dungeon then
-			-- A run the area event never announced. The client can change the
-			-- instance's name in the middle of one (a teleport with a loading
-			-- screen does), and the new name has no record yet. It is created
-			-- here so the time is not silently dropped, and flagged so the
-			-- next area event does not count the same run twice.
-			dungeon = { entered = 1, bosses = 0, first = Now(), last = Now(), byTick = true }
+			-- A visit the area event never announced. The client can change
+			-- the instance's name in the middle of one (a teleport with a
+			-- loading screen does), and the new name has no record yet. It is
+			-- created here so the time is not silently dropped; the run is
+			-- only counted once a kill is seen.
+			dungeon = { entered = 0, bosses = 0, first = Now(), last = Now() }
 			char.explore.dungeons[currentInstance] = dungeon
-			if ns.NoteDungeonMilestone then
-				ns.NoteDungeonMilestone(char)
-			end
 		end
 		dungeon.seconds = (dungeon.seconds or 0) + 1
 		dungeon.lastSeenAt = now

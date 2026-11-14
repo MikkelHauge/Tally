@@ -1335,6 +1335,11 @@ end
 -- record has one writer, whichever source saw the death.
 function ns.NoteKill(creatureName, zone)
 	AddKill(creatureName, zone)
+	-- A kill is what makes the current instance visit a run; entering or
+	-- dying there is not enough on its own.
+	if ns.NoteInstanceKill then
+		ns.NoteInstanceKill()
+	end
 	if ns.OnDataTick then
 		ns.OnDataTick()
 	end

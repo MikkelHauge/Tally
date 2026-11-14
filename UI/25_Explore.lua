@@ -252,7 +252,7 @@ local function BuildExplorePage(page)
 	AddCardTitleNote(exploreWidgets.zones, "Time in zones",
 		"Time spent in each zone and its visits, counted second by second while logged in. A visit is leaving and coming back; logging in or reloading is not one.")
 	AddCardTitleNote(exploreWidgets.dungeons, "Time in dungeons",
-		"Time spent in each instance, with runs and bosses; raids count here too. A run is one entry, so the same place entered three times reads three.")
+		"Time spent in each instance, with runs and bosses; raids count here too. A run counts once something is killed in the instance, so entering and leaving - or dying and running back - does not add one.")
 	-- Both lists keep every entry, so both cards take the wheel, and both
 	-- carry an order button that hides itself while the card holds one place.
 	MakeCardScrollable(exploreWidgets.zones, exploreWidgets, "zoneScrollOffset", RefreshExplore)
