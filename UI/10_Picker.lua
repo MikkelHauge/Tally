@@ -177,8 +177,10 @@ do
 		return colors
 	end
 
-	-- The orders the picker can list characters in.
-	local DAILY_SORTS = { "name", "nameDesc", "class", "classDesc" }
+	-- The orders the picker can list characters in. Name and class have both
+	-- directions; level does too, because "who is closest to 60" is a question
+	-- the list is asked often.
+	local DAILY_SORTS = { "name", "nameDesc", "class", "classDesc", "level", "levelDesc" }
 
 	local function NextDailySort(mode)
 		for index = 1, #DAILY_SORTS do
@@ -198,6 +200,12 @@ do
 		end
 		if mode == "classDesc" then
 			return "class Z-A"
+		end
+		if mode == "level" then
+			return "level 1-60"
+		end
+		if mode == "levelDesc" then
+			return "level 60-1"
 		end
 		return "name A-Z"
 	end
@@ -348,7 +356,7 @@ do
 		-- Brighter than the settings page's notes: this one sits on a near
 		-- black window and is the first thing read here.
 		panel.note:SetTextColor(0.84, 0.84, 0.84)
-		local picker = { kind = kind, group = group, panel = panel, rows = {}, sort = "name", shown = false, offsets = { 0, 0 } }
+		local picker = { kind = kind, group = group, panel = panel, rows = {}, sort = "name", shown = false, offsets = { 0, 0 }, hoverColumn = 1 }
 		-- Each group keeps its own window; the Total group is also exposed as
 		-- charPickers.panel for the callers that predate the notification list.
 		charPickers.panels[group] = picker
@@ -371,20 +379,10 @@ do
 			RefreshCharPicker(kind)
 		end
 
-		-- The empty space beside and below the rows still belongs to its side,
-		-- so the wheel there moves that side too. These sit behind the rows
-		-- (created first, so the rows answer their own clicks) and take no
-		-- clicks of their own.
-		for column = 1, 2 do
-			local catcher = CreateFrame("Frame", nil, panel)
-			catcher:SetPoint("TOPLEFT", panel, "TOPLEFT", COLUMN_LEFT[column] - 5, ROW_TOP + 10)
-			catcher:SetPoint("BOTTOMRIGHT", panel, "TOPLEFT", COLUMN_LEFT[column] + ROW_WIDTH + 20, ROW_TOP - DAILY_PANEL_ROWS * ROW_STEP - 4)
-			catcher:EnableMouse(true)
-			catcher:EnableMouseWheel(true)
-			catcher:SetScript("OnMouseWheel", function(_, delta)
-				WheelColumn(column, delta)
-			end)
-		end
+		-- The empty space between and below the rows still belongs to a side:
+		-- the panel answers the wheel there for the side last hovered. No
+		-- invisible frame is laid over the rows - such a frame would take
+		-- their clicks - so a row is always the whole clickable target.
 
 		panel.rows = {}
 		for index = 1, DAILY_PANEL_ROWS * 2 do
@@ -440,6 +438,9 @@ do
 				pickerInfo.onChange()
 			end)
 			row:SetScript("OnEnter", function(self)
+				-- The row answers its own wheel; this remembers which side the
+				-- cursor is on, for the wheel over the space between the rows.
+				picker.hoverColumn = self.column
 				local entry = self.tooltipRow
 				if not entry then
 					return
@@ -506,6 +507,15 @@ do
 			end)
 			panel.bars[column] = bar
 		end
+
+		-- The wheel over a row is answered by the row. The wheel over the
+		-- gaps, the space below the last row or the bar falls here, and moves
+		-- the side the cursor was last seen over, so neither column needs
+		-- pixel-perfect aim and no frame is laid over the rows themselves.
+		panel:EnableMouseWheel(true)
+		panel:SetScript("OnMouseWheel", function(_, delta)
+			WheelColumn(picker.hoverColumn or 1, delta)
+		end)
 
 		-- The quick picks and the sort, along the bottom.
 		local buttonX = 14
@@ -613,6 +623,17 @@ do
 					local two = (b.char and b.char.class) or "?"
 					if one ~= two then
 						if mode == "classDesc" then
+							return one > two
+						end
+						return one < two
+					end
+				elseif mode == "level" or mode == "levelDesc" then
+					-- Level is read as a number: an old save could still hold
+					-- it as text, and "9" must sort below "10".
+					local one = tonumber(a.char and a.char.level) or 0
+					local two = tonumber(b.char and b.char.level) or 0
+					if one ~= two then
+						if mode == "levelDesc" then
 							return one > two
 						end
 						return one < two
