@@ -37,7 +37,25 @@ do
 	-- Tally has read on this realm, both factions under their own heading, each
 	-- with the colour its line is drawn in. Rows are ticked rather than names
 	-- clicked.
-	local DAILY_PANEL_ROWS = 13
+	--
+	-- Each side is a list of its own: a side with more characters than the
+	-- column holds gets a scrollbar, and the wheel walks that side without
+	-- moving the other. Fourteen rows fit under the note on a 760x580 window
+	-- (the rows start 76 below the top and the quick-pick buttons sit 38 above
+	-- the bottom), which is one heading plus thirteen characters.
+	local DAILY_PANEL_ROWS = 14
+	-- Where the two columns start, how wide their rows are, and where each
+	-- column's scrollbar sits. The bar lives in the gap between the rows of a
+	-- column and the edge of its wash, so it never covers a name or a figure.
+	local COLUMN_LEFT = { 14, 370 }
+	local ROW_TOP = -76
+	local ROW_WIDTH = 326
+	local ROW_HEIGHT = 20
+	local ROW_STEP = 22
+	local BAR_LEFT = ROW_WIDTH + 4
+	local BAR_WIDTH = 10
+	-- What one notch of the wheel moves, as the window's other long lists do.
+	local WHEEL_ROWS = 3
 
 	local DUPLICATE_COLORS = {
 		{ 0.55, 0.55, 0.55 },  -- grey
@@ -330,7 +348,7 @@ do
 		-- Brighter than the settings page's notes: this one sits on a near
 		-- black window and is the first thing read here.
 		panel.note:SetTextColor(0.84, 0.84, 0.84)
-		local picker = { kind = kind, group = group, panel = panel, rows = {}, sort = "name", shown = false }
+		local picker = { kind = kind, group = group, panel = panel, rows = {}, sort = "name", shown = false, offsets = { 0, 0 } }
 		-- Each group keeps its own window; the Total group is also exposed as
 		-- charPickers.panel for the callers that predate the notification list.
 		charPickers.panels[group] = picker
@@ -339,14 +357,44 @@ do
 			charPickers.panel = picker
 		end
 
+		-- The wheel walks one side's list, three rows a notch. The redraw
+		-- clamps the offset, so scrolling past either end simply stops.
+		local function WheelColumn(column, delta)
+			local offsets = picker.offsets
+			offsets[column] = (offsets[column] or 0) + (delta > 0 and -WHEEL_ROWS or WHEEL_ROWS)
+			if offsets[column] < 0 then
+				offsets[column] = 0
+			end
+			if GameTooltip:IsShown() then
+				GameTooltip:Hide()
+			end
+			RefreshCharPicker(kind)
+		end
+
+		-- The empty space beside and below the rows still belongs to its side,
+		-- so the wheel there moves that side too. These sit behind the rows
+		-- (created first, so the rows answer their own clicks) and take no
+		-- clicks of their own.
+		for column = 1, 2 do
+			local catcher = CreateFrame("Frame", nil, panel)
+			catcher:SetPoint("TOPLEFT", panel, "TOPLEFT", COLUMN_LEFT[column] - 5, ROW_TOP + 10)
+			catcher:SetPoint("BOTTOMRIGHT", panel, "TOPLEFT", COLUMN_LEFT[column] + ROW_WIDTH + 20, ROW_TOP - DAILY_PANEL_ROWS * ROW_STEP - 4)
+			catcher:EnableMouse(true)
+			catcher:EnableMouseWheel(true)
+			catcher:SetScript("OnMouseWheel", function(_, delta)
+				WheelColumn(column, delta)
+			end)
+		end
+
 		panel.rows = {}
 		for index = 1, DAILY_PANEL_ROWS * 2 do
-			local column = math.floor((index - 1) / DAILY_PANEL_ROWS)
+			local column = math.floor((index - 1) / DAILY_PANEL_ROWS) + 1
 			local slot = (index - 1) % DAILY_PANEL_ROWS
 			local row = CreateFrame("Button", nil, panel)
-			row:SetHeight(20)
-			row:SetWidth(340)
-			row:SetPoint("TOPLEFT", panel, "TOPLEFT", 14 + column * 356, -76 - slot * 22)
+			row.column = column
+			row:SetHeight(ROW_HEIGHT)
+			row:SetWidth(ROW_WIDTH)
+			row:SetPoint("TOPLEFT", panel, "TOPLEFT", COLUMN_LEFT[column], ROW_TOP - slot * ROW_STEP)
 			row.border = row:CreateTexture(nil, "BORDER")
 			row.border:SetSize(16, 16)
 			row.border:SetPoint("LEFT", 0, 0)
@@ -410,6 +458,10 @@ do
 			row:SetScript("OnLeave", function()
 				GameTooltip:Hide()
 			end)
+			row:EnableMouseWheel(true)
+			row:SetScript("OnMouseWheel", function(_, delta)
+				WheelColumn(column, delta)
+			end)
 			panel.rows[index] = row
 		end
 
@@ -419,14 +471,40 @@ do
 		panel.washes = {}
 		for column = 1, 2 do
 			local wash = panel:CreateTexture(nil, "BACKGROUND", nil, 0)
-			wash:SetPoint("TOPLEFT", panel, "TOPLEFT", 9 + (column - 1) * 356, -66)
-			wash:SetSize(350, DAILY_PANEL_ROWS * 22 + 4)
+			wash:SetPoint("TOPLEFT", panel, "TOPLEFT", COLUMN_LEFT[column] - 5, ROW_TOP + 10)
+			wash:SetSize(ROW_WIDTH + 24, DAILY_PANEL_ROWS * ROW_STEP + 4)
 			if column == 1 then
 				wash:SetColorTexture(0.45, 0.08, 0.08, 0.11)
 			else
 				wash:SetColorTexture(0.08, 0.16, 0.38, 0.11)
 			end
 			panel.washes[column] = wash
+		end
+
+		-- A scrollbar per side, the same template the window's other long
+		-- lists use, so it looks and drags like the recent-changes card in the
+		-- ledger. It only appears while that side has more rows than the
+		-- column holds, and the wheel works whether it shows or not.
+		panel.bars = {}
+		for column = 1, 2 do
+			local bar = CreateFrame("Slider", nil, panel, "UIPanelScrollBarTemplate")
+			bar:SetPoint("TOPLEFT", panel, "TOPLEFT", COLUMN_LEFT[column] + BAR_LEFT, ROW_TOP + 4)
+			bar:SetPoint("BOTTOMLEFT", panel, "TOPLEFT", COLUMN_LEFT[column] + BAR_LEFT, ROW_TOP - DAILY_PANEL_ROWS * ROW_STEP + 6)
+			bar:SetWidth(BAR_WIDTH)
+			bar:SetValueStep(1)
+			bar:SetMinMaxValues(0, 1)
+			bar:SetValue(0)
+			bar:Hide()
+			bar:SetScript("OnValueChanged", function(self, value)
+				-- The redraw below sets the bar's own value; answering that
+				-- would start another redraw for nothing.
+				if self.updating then
+					return
+				end
+				picker.offsets[column] = math.floor((tonumber(value) or 0) + 0.5)
+				RefreshCharPicker(kind)
+			end)
+			panel.bars[column] = bar
 		end
 
 		-- The quick picks and the sort, along the bottom.
@@ -570,16 +648,38 @@ do
 			end
 		end
 		local countText = included.." of "..#rows..(pickerInfo.countSuffix or " used")
-		if #columns[1] > DAILY_PANEL_ROWS or #columns[2] > DAILY_PANEL_ROWS then
-			countText = countText.." - more characters than fit"
-		end
 		panel.count:SetText(countText)
 
 		for column = 1, 2 do
 			local list = columns[column]
+			-- How far this side can scroll, which is how many of its rows are
+			-- out of view. The offset is kept per side and per picker, and is
+			-- clamped here so a sort, a tick or a character that went away can
+			-- never leave a column showing nothing.
+			local maxOffset = math.max(0, #list - DAILY_PANEL_ROWS)
+			local offset = picker.offsets[column] or 0
+			if offset < 0 then
+				offset = 0
+			elseif offset > maxOffset then
+				offset = maxOffset
+			end
+			picker.offsets[column] = offset
+			local bar = panel.bars and panel.bars[column]
+			if bar then
+				bar.updating = true
+				if maxOffset > 0 then
+					bar:SetMinMaxValues(0, maxOffset)
+					bar:SetValue(offset)
+					bar:Show()
+				else
+					bar:SetValue(0)
+					bar:Hide()
+				end
+				bar.updating = false
+			end
 			for slot = 1, DAILY_PANEL_ROWS do
 				local row = panel.rows[(column - 1) * DAILY_PANEL_ROWS + slot]
-				local item = list[slot]
+				local item = list[offset + slot]
 				if row then
 					if not item then
 						row:Hide()
