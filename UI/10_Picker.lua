@@ -177,10 +177,11 @@ do
 		return colors
 	end
 
-	-- The orders the picker can list characters in. Name and class have both
-	-- directions; level does too, because "who is closest to 60" is a question
-	-- the list is asked often.
-	local DAILY_SORTS = { "name", "nameDesc", "class", "classDesc", "level", "levelDesc" }
+	-- The orders the picker can list characters in. Played time is first and
+	-- is the default: the character with the most time on it at the top, which
+	-- is how a list of characters is usually read. Name, class and level each
+	-- have both directions as well.
+	local DAILY_SORTS = { "played", "playedLeast", "name", "nameDesc", "class", "classDesc", "level", "levelDesc" }
 
 	local function NextDailySort(mode)
 		for index = 1, #DAILY_SORTS do
@@ -207,7 +208,13 @@ do
 		if mode == "levelDesc" then
 			return "level 60-1"
 		end
-		return "name A-Z"
+		if mode == "playedLeast" then
+			return "played least"
+		end
+		if mode == "name" then
+			return "name A-Z"
+		end
+		return "played most"
 	end
 
 	-- Each picker kind names the selection it edits. The Total tab, the graphs,
@@ -241,6 +248,10 @@ do
 				tips[#tips + 1] = { text = ns.MoneyColored(balance)..(entry.live and " - playing now" or (" - last known, seen "..ns.FormatDate(entry.seen or 0))), color = { 1, 1, 1 } }
 			else
 				tips[#tips + 1] = { text = "No balance recorded yet.", color = { 0.7, 0.7, 0.7 } }
+			end
+			local playedTotal = tonumber(char.played and char.played.total)
+			if playedTotal then
+				tips[#tips + 1] = { text = ns.FormatDuration(playedTotal).." played in total (the server's /played).", color = { 0.7, 0.7, 0.7 } }
 			end
 			tips[#tips + 1] = { text = ns.FormatDuration(char.tracked or 0).." watched by Tally, "..(char.quests or 0).." quests.", color = { 0.7, 0.7, 0.7 } }
 			rows[#rows + 1] = {
@@ -356,7 +367,7 @@ do
 		-- Brighter than the settings page's notes: this one sits on a near
 		-- black window and is the first thing read here.
 		panel.note:SetTextColor(0.84, 0.84, 0.84)
-		local picker = { kind = kind, group = group, panel = panel, rows = {}, sort = "name", shown = false, offsets = { 0, 0 }, hoverColumn = 1 }
+		local picker = { kind = kind, group = group, panel = panel, rows = {}, sort = "played", shown = false, offsets = { 0, 0 }, hoverColumn = 1 }
 		-- Each group keeps its own window; the Total group is also exposed as
 		-- charPickers.panel for the callers that predate the notification list.
 		charPickers.panels[group] = picker
@@ -600,7 +611,7 @@ do
 		local panel = picker.panel
 		local rows = pickerInfo.rows()
 		picker.rows = rows
-		local mode = picker.sort or "name"
+		local mode = picker.sort or "played"
 		if panel.sortButton then
 			panel.sortButton:SetText("sort: "..DailySortLabel(mode))
 		end
@@ -634,6 +645,19 @@ do
 					local two = tonumber(b.char and b.char.level) or 0
 					if one ~= two then
 						if mode == "levelDesc" then
+							return one > two
+						end
+						return one < two
+					end
+				elseif mode == "played" or mode == "playedLeast" then
+					-- Lifetime played as the server reports it: the same figure
+					-- the Playtime tab puts first. A character with no /played
+					-- reading counts as none, so it sits with the least played
+					-- rather than pretending to a figure.
+					local one = tonumber(a.char and a.char.played and a.char.played.total) or 0
+					local two = tonumber(b.char and b.char.played and b.char.played.total) or 0
+					if one ~= two then
+						if mode == "played" then
 							return one > two
 						end
 						return one < two
